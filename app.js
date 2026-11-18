@@ -122,11 +122,11 @@ async function renderLibrary() {
     const bar = document.createElement('div'); bar.className = 'pbar'; bar.innerHTML = '<i></i>'; bar.firstChild.style.width = Math.round((b.progress || 0) * 100) + '%';
     meta.append(t, sm, bar);
     const acts = document.createElement('div'); acts.className = 'acts';
-    const mk = (label, aria, fn) => { const x = document.createElement('button'); x.className = 'btn ghost'; x.textContent = label; x.setAttribute('aria-label', aria); x.onclick = (e) => { e.stopPropagation(); fn(); }; return x; };
+    const mk = (icon, aria, fn, cls = '') => { const x = document.createElement('button'); x.className = 'btn icon ' + cls; x.innerHTML = `<svg class="ico"><use href="#i-${icon}"/></svg>`; x.setAttribute('aria-label', aria); x.title = aria; x.onclick = (e) => { e.stopPropagation(); fn(); }; return x; };
     acts.append(
-      mk('✏️', 'Rename', async () => { const n = (prompt('New name for this book:', b.title) || '').trim(); if (n && n !== b.title) { await renameBook(b.id, n); renderLibrary(); } }),
-      mk('⬇', 'Download EPUB', () => downloadBlob(b.blob, b.title)),
-      mk('🗑', 'Remove', async () => { if (confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } }),
+      mk('edit', 'Rename', async () => { const n = (prompt('New name for this book:', b.title) || '').trim(); if (n && n !== b.title) { await renameBook(b.id, n); renderLibrary(); } }),
+      mk('download', 'Download EPUB', () => downloadBlob(b.blob, b.title)),
+      mk('trash', 'Remove', async () => { if (confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } }, 'danger'),
     );
     li.append(cover, meta, acts);
     li.onclick = () => openSaved(b.id);
