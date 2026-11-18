@@ -11,7 +11,9 @@ const mimeOf = (p) => MIME[p.split('.').pop().toLowerCase()] || 'application/oct
 const xml = (s, type = 'application/xml') => new DOMParser().parseFromString(s, type);
 
 export async function parseEpub(blob) {
-  const zip = await JSZip.loadAsync(blob);
+  let zip;
+  try { zip = await JSZip.loadAsync(blob); } catch { throw new Error('This file is not a valid EPUB (it could not be unzipped).'); }
+  if (!zip.file('META-INF/container.xml')) throw new Error('This file is not a valid EPUB (container.xml is missing).');
   const read = async (p) => { const f = zip.file(p); if (!f) throw new Error('Missing file in EPUB: ' + p); return f.async('string'); };
   const container = xml(await read('META-INF/container.xml'));
   const opfPath = container.querySelector('rootfile').getAttribute('full-path');
@@ -38,14 +40,15 @@ export async function parseEpub(blob) {
   const imageOnly = docs.filter((d) => d.body.querySelector('img, image') && d.body.textContent.replace(/\s+/g, ' ').trim().length < 30);
   const result = { title, author, coverBlob, pageCount: spine.length, mode: 'reflow', blocks: null, pageImages: null, skipFirst: false };
 
-  if (docs.length && imageOnly.length > docs.length / 2) { // fixed-layout book
-    result.mode = 'fixed'; result.pageImages = [];
+  if (docs.length && imageOnly.length > docs.length / 2) { // fixed-layout book: images are loaded page by page
+    const paths = [];
     for (const d of imageOnly) {
       const img = d.body.querySelector('img, image');
       const href = img.getAttribute('src') || img.getAttribute('href') || img.getAttribute('xlink:href');
-      const b = href && await fileBlob(resolve(d.item.href, href));
-      if (b) result.pageImages.push(b);
+      if (href && zip.file(resolve(d.item.href, href))) paths.push(resolve(d.item.href, href));
     }
+    if (!paths.length) throw new Error('No page images found in this EPUB.');
+    Object.assign(result, { mode: 'fixed', lazyImages: true, imageCount: paths.length, loadImage: (i) => fileBlob(paths[i]) });
     return result;
   }
   result.blocks = [];

@@ -15,12 +15,19 @@ export class Book {
     this.data = data; this.cur = 0; this._startFrac = startFrac; this._layout();
   }
 
-  progress() { return this.leaves.length ? this.cur / this.leaves.length : 0; }
+  _maxCur() { return Math.max(1, this.leaves.length - (this.spread === 2 ? 0 : 1)); }
+  progress() { return this.leaves.length ? Math.min(1, this.cur / this._maxCur()) : 0; }
+  goTo(frac) { // jump (no animation) to a position 0..1
+    if (this.busy || !this.leaves.length) return;
+    this.cur = Math.max(0, Math.min(this._maxCur(), Math.round(frac * this._maxCur())));
+    this._update(true);
+  }
 
   destroy() {
     this.measure.remove(); this.el.innerHTML = '';
     this._ac.abort(); clearTimeout(this._t); cancelAnimationFrame(this.raf);
     (this.urls || []).forEach(URL.revokeObjectURL);
+    if (this._lazy) this._lazy.forEach((p) => p.then((u) => u && URL.revokeObjectURL(u)));
   }
 
   _bind() {
@@ -89,6 +96,7 @@ export class Book {
     const blank = '<div class="page blank"></div>';
     el.querySelector('.f-flat').innerHTML = this.pages[L * per] || blank;
     el.querySelector('.f-flap').innerHTML = per === 2 ? (this.pages[L * per + 1] || blank) : blank;
+    this._hydrate(el);
     this.el.appendChild(el);
     leaf.style.visibility = 'hidden';
     this.fold = { el, L, cy, leaf, under: el.querySelector('.f-under'), flat: el.querySelector('.f-flat'), clip: el.querySelector('.f-flapclip'), flap: el.querySelector('.f-flap'), shade: el.querySelector('.f-flapshade') };
@@ -179,7 +187,7 @@ export class Book {
       this.el.appendChild(leaf); this.leaves.push(leaf);
     }
     this.cur = Math.min(count, Math.floor(keepPage / per));
-    if (this._startFrac != null) { this.cur = Math.min(Math.max(0, count - (per === 2 ? 0 : 1)), Math.round(this._startFrac * count)); this._startFrac = null; }
+    if (this._startFrac != null) { this.cur = Math.min(this._maxCur(), Math.round(this._startFrac * this._maxCur())); this._startFrac = null; }
     this._update(true);
   }
 
@@ -187,9 +195,13 @@ export class Book {
     const d = this.data, out = [];
     // cover
     const coverUrl = d.coverBlob ? this._url(d.coverBlob) : null;
-    out.push(d.pageImages && coverUrl
+    out.push((d.pageImages || d.lazyImages) && coverUrl
       ? `<div class="page cover"><img src="${coverUrl}" alt="Cover"></div>`
       : `<div class="page cover"><h1>${esc(d.title)}</h1><p>${esc(d.author || '')}</p></div>`);
+    if (d.lazyImages) {
+      for (let i = 0; i < d.imageCount; i++) out.push(`<div class="page imgpage"><img data-i="${i}" alt="Page ${i + 1}"></div>`);
+      return out;
+    }
     if (d.pageImages) {
       d.pageImages.forEach((b, i) => { if (i === 0 && d.skipFirst) return; out.push(`<div class="page imgpage"><img src="${this._url(b)}" alt="Page ${i + 1}"></div>`); });
       return out;
@@ -235,7 +247,22 @@ export class Book {
 
   _url(blob) { const u = URL.createObjectURL(blob); (this.urls ||= []).push(u); return u; }
 
-  _fill(face, html) { face.innerHTML = html || '<div class="page blank"></div>'; }
+  _fill(face, html) { face.innerHTML = html || '<div class="page blank"></div>'; this._hydrate(face); }
+
+  // lazy page images (EPUBs opened from a file): load the image for each <img data-i> when it is shown
+  _hydrate(root) {
+    if (!this.data || !this.data.lazyImages) return;
+    root.querySelectorAll('img[data-i]:not([src])').forEach((img) => {
+      const i = +img.dataset.i;
+      this._lazy ||= new Map();
+      if (!this._lazy.has(i)) {
+        const p = this.data.loadImage(i).then((blob) => (blob ? URL.createObjectURL(blob) : ''));
+        this._lazy.set(i, p);
+        if (this._lazy.size > 40) { const k = this._lazy.keys().next().value; this._lazy.get(k).then((u) => u && URL.revokeObjectURL(u)); this._lazy.delete(k); }
+      }
+      this._lazy.get(i).then((u) => { if (u) img.src = u; });
+    });
+  }
 
   _update(instant) {
     const n = this.leaves.length, per = this.spread;
