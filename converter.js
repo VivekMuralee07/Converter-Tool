@@ -136,10 +136,12 @@ const XHTML = (title, body, extra = '') => `<?xml version="1.0" encoding="utf-8"
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en" lang="en">
 <head><meta charset="utf-8"/><title>${esc(title)}</title><link rel="stylesheet" type="text/css" href="style.css"/>${extra}</head>
-<body>${body}</body></html>`;
+<body${body.startsWith('<div class="fx"') ? ' class="fxb"' : ''}>${body}</body></html>`;
 
 const CSS = `body{font-family:serif;line-height:1.5;margin:0 .6em}h1{font-size:1.6em;margin:1.2em 0 .6em}h2{font-size:1.25em;margin:1em 0 .4em}
-p{margin:0 0 .8em;text-align:justify}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}`;
+p{margin:0 0 .8em;text-align:justify}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
+html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff}
+.fx img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}`;
 
 function uuid() { return 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); }
 
@@ -165,7 +167,7 @@ export async function convert(file, { title, author, mode }, onProgress = () => 
       const img = i === 1 ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8);
       const name = `p${String(i).padStart(4, '0')}`;
       zip.file(`OEBPS/${name}.jpg`, img.blob);
-      zip.file(`OEBPS/${name}.xhtml`, XHTML(`Page ${i}`, `<div class="page"><img src="${name}.jpg" alt="Page ${i}" style="width:100%;height:100%"/></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
+      zip.file(`OEBPS/${name}.xhtml`, XHTML(`Page ${i}`, `<div class="fx"><img src="${name}.jpg" alt="Page ${i}"/></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
       manifest += `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"/><item id="${name}i" href="${name}.jpg" media-type="image/jpeg"/>`;
       spine += `<itemref idref="${name}"/>`;
       toc.push({ href: `${name}.xhtml`, title: `Page ${i}` });
@@ -207,7 +209,7 @@ export async function convert(file, { title, author, mode }, onProgress = () => 
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
 <dc:identifier id="uid">${id}</dc:identifier><dc:title>${esc(title)}</dc:title><dc:creator>${esc(author || 'Unknown')}</dc:creator><dc:language>en</dc:language>
 <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, 'Z')}</meta>
-<meta name="cover" content="cover-img"/>${fixed ? '<meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">auto</meta>' : ''}
+<meta name="cover" content="cover-img"/>${fixed ? '<meta property="rendition:layout">pre-paginated</meta><meta property="rendition:spread">none</meta><meta property="rendition:orientation">auto</meta>' : ''}
 </metadata>
 <manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 <item id="css" href="style.css" media-type="text/css"/><item id="cover-img" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>${manifest}</manifest>
