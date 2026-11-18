@@ -27,16 +27,47 @@ export class Book {
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') this.prev();
     };
     addEventListener('resize', this._onResize); addEventListener('keydown', this._onKey);
-    let sx = null;
-    this.stage.addEventListener('pointerdown', (e) => { sx = e.clientX; });
-    this.stage.addEventListener('pointerup', (e) => {
-      if (sx === null) return;
-      const dx = e.clientX - sx; sx = null;
-      if (dx < -40) return this.next();
-      if (dx > 40) return this.prev();
-      const r = this.el.getBoundingClientRect(), rel = (e.clientX - r.left) / r.width;
-      if (rel > (this.spread === 2 ? 0.5 : 0.3)) this.next(); else this.prev();
+    // Drag to turn: the page follows the finger, then settles forward or back on release.
+    let drag = null;
+    const travel = () => this.pw * (this.spread === 2 ? 1.5 : 1);
+    this.stage.addEventListener('pointerdown', (e) => {
+      if (drag && drag.leaf) return;
+      drag = { x: e.clientX, t: performance.now(), dir: 0, leaf: null, p: 0, id: e.pointerId };
     });
+    this.stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (!drag.dir) {
+        if (Math.abs(dx) < 8) return;
+        const dir = dx < 0 ? 1 : -1; // 1 = next page, -1 = previous page
+        const st = this.status();
+        if ((dir === 1 && !st.canNext) || (dir === -1 && !st.canPrev)) { drag = null; return; }
+        drag.dir = dir; drag.leaf = this.leaves[dir === 1 ? this.cur : this.cur - 1];
+        drag.leaf.classList.add('turning'); drag.leaf.style.transition = 'none';
+        try { this.stage.setPointerCapture(drag.id); } catch { /* ignore */ }
+      }
+      const p = Math.max(0, Math.min(1, (drag.dir === 1 ? -dx : dx) / travel()));
+      drag.p = p; drag.v = (e.clientX - (drag.lx ?? drag.x)) / Math.max(1, performance.now() - (drag.lt ?? drag.t)); drag.lx = e.clientX; drag.lt = performance.now();
+      drag.leaf.style.transform = `rotateY(${drag.dir === 1 ? -180 * p : -180 + 180 * p}deg)`;
+    });
+    const end = (e, cancelled) => {
+      const d = drag; drag = null;
+      if (!d) return;
+      if (!d.dir) { // a tap: left/right side turns the page
+        if (cancelled) return;
+        const r = this.el.getBoundingClientRect(), rel = (e.clientX - r.left) / r.width;
+        return (rel > (this.spread === 2 ? 0.5 : 0.3)) ? this.next() : this.prev();
+      }
+      const flick = d.dir * -d.v > 0.5; // fast swipe in the turning direction
+      const commit = !cancelled && (d.p > 0.3 || (flick && d.p > 0.04));
+      void d.leaf.offsetWidth; // flush so the release animates from the finger position
+      d.leaf.style.transition = ''; d.leaf.style.transform = '';
+      if (commit) { this.cur += d.dir; }
+      this._update();
+      setTimeout(() => d.leaf.classList.remove('turning'), 1100); // in case no transition event fires
+    };
+    this.stage.addEventListener('pointerup', (e) => end(e, false));
+    this.stage.addEventListener('pointercancel', (e) => end(e, true));
   }
 
   _layout() {
