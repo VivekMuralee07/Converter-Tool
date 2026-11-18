@@ -173,9 +173,15 @@
     <div id="busy" hidden><div class="spin big"></div><span id="busyText">Opening…</span></div>
     <div id="rProg" class="rprog" hidden><i></i></div>
     <section id="stepReader" hidden>
+      <div id="warmVeil" aria-hidden="true"></div>
       <div class="reader-bar">
         <button id="rBack" class="btn ghost">← Back</button>
         <strong id="rTitle"></strong>
+        <div class="themes" role="group" aria-label="Reading theme">
+          <button class="tbtn" data-theme="light" aria-label="Light page" title="Light" aria-pressed="true"></button>
+          <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
+          <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
+        </div>
         <button id="rFull" class="btn ghost" aria-label="Full screen">⛶</button>
       </div>
       <div id="rStage" class="stage reader"><div id="rBook" class="book" aria-label="Book"></div></div>
@@ -188,7 +194,7 @@
     </section>
   </main>
 
-  <footer>v16 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v17 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>

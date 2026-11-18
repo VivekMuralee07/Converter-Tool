@@ -9,6 +9,7 @@ const show = (id) => {
   steps.forEach((s) => ($(s).hidden = s !== id));
   $('stepLibrary').hidden = id !== 'stepPick';
   document.body.classList.toggle('reading', id === 'stepReader');
+  if (id !== 'stepReader') delete document.body.dataset.theme;
   if (id === 'stepPick') renderLibrary();
 };
 
@@ -150,11 +151,22 @@ const savePos = () => { if (readerBook && readerId) setProgress(readerId, reader
 addEventListener('pagehide', savePos);
 document.addEventListener('visibilitychange', () => { if (document.hidden) savePos(); });
 
+const THEMES = ['light', 'dark', 'warm'];
+function setTheme(t) {
+  if (!THEMES.includes(t)) t = 'light';
+  try { localStorage.setItem('readerTheme', t); } catch { /* private mode */ }
+  document.body.dataset.theme = t;
+  document.querySelectorAll('.tbtn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.theme === t)));
+}
+document.querySelectorAll('.tbtn').forEach((b) => (b.onclick = () => setTheme(b.dataset.theme)));
+
 function openReader(data, id, startFrac = 0, from = 'stepPick') {
   backTo = from; readerId = id;
   if (readerBook) { readerBook.destroy(); readerBook = null; }
   $('rTitle').textContent = data.title;
   show('stepReader');
+  let saved = 'light'; try { saved = localStorage.getItem('readerTheme') || 'light'; } catch { /* ignore */ }
+  setTheme(saved);
   const reader = $('stepReader');
   reader.classList.add('chrome-hidden'); // immersive by default; tap the middle of the page for controls
   $('rProg').hidden = false;
