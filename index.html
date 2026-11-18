@@ -5,98 +5,157 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>PDF to EPUB Book Converter</title>
   <meta name="description" content="Convert PDF files to EPUB books on your device, with a page-turning book preview.">
-  <meta name="theme-color" content="#1a1f2e">
+  <meta name="theme-color" content="#141a2b">
+  <meta name="color-scheme" content="dark">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7 9m5-5l5 5"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 016.5 3H20v15H6.5A2.5 2.5 0 004 20.5v-15z"/><path d="M4 20.5A2.5 2.5 0 006.5 23H20v-5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v12m0 0l-5-5m5 5l5-5"/><path d="M4 20h16"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5l6.8-4M8.6 13.5l6.8 4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l3 3 5-6"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14M10 11v5M14 11v5"/></symbol>
+    <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
+  </svg>
+
   <header class="top">
-    <div class="brand"><img src="icons/icon-192.png" alt="" width="36" height="36"><span>PDF <b>→</b> EPUB</span></div>
-    <button id="installBtn" class="btn ghost" hidden>Install app</button>
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" width="40" height="40">
+      <span class="brand-name">PDF<i>→</i>EPUB</span>
+    </div>
+    <button id="installBtn" class="btn pill" hidden><svg class="ico"><use href="#i-download"/></svg>Install app</button>
   </header>
 
   <main>
-    <section id="stepPick" class="card">
-      <h1>Turn any PDF into a book</h1>
-      <p class="sub">Runs entirely on your device — your files are never uploaded.</p>
+    <!-- ============ Home ============ -->
+    <section id="stepPick" class="hero">
+      <div class="hero-art" aria-hidden="true">
+        <div class="mini-book">
+          <div class="mb-page left"></div>
+          <div class="mb-page right"></div>
+          <div class="mb-leaf"><i></i></div>
+        </div>
+      </div>
+      <h1>Turn any PDF into a <span class="grad">book you can flip</span></h1>
+      <p class="lead">Convert PDFs to EPUB right on your device, then read them with a real page-turning effect.</p>
+
       <label id="drop" class="drop" tabindex="0">
         <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-        <span class="drop-ico">📖</span>
-        <strong>Tap to choose a PDF</strong>
+        <span class="drop-badge"><svg class="ico big"><use href="#i-upload"/></svg></span>
+        <strong>Choose a PDF</strong>
         <small>or drag &amp; drop it here</small>
+        <span class="btn primary lg fake"><svg class="ico"><use href="#i-folder"/></svg>Browse files</span>
       </label>
+
+      <ul class="chips">
+        <li>🔒 Private &mdash; nothing is uploaded</li>
+        <li>📖 Page-turn reader</li>
+        <li>📴 Works offline</li>
+      </ul>
     </section>
 
-    <section id="stepLibrary" class="card">
-      <div class="lib-head">
-        <h2>My books</h2>
-        <label class="btn">📚 Open an EPUB<input id="epubFile" type="file" accept=".epub,application/epub+zip,application/octet-stream,application/zip" hidden></label>
+    <section id="stepLibrary" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>My books</h2>
+          <p class="muted">Pick up where you left off.</p>
+        </div>
+        <label class="btn secondary"><svg class="ico"><use href="#i-folder"/></svg>Open an EPUB<input id="epubFile" type="file" accept=".epub,application/epub+zip,application/octet-stream,application/zip" hidden></label>
       </div>
-      <p id="libEmpty" class="sub">Converted and opened books are kept here on your device, so you can read them again — even offline.</p>
+      <div id="libEmpty" class="empty">
+        <div class="empty-ico">📚</div>
+        <b>No books yet</b>
+        <span>Books you convert or open are saved on this device so you can read them again &mdash; even offline.</span>
+      </div>
       <ul id="bookList" class="books"></ul>
     </section>
 
-    <section id="stepOptions" class="card" hidden>
-      <h2 id="fileName">book.pdf</h2>
+    <!-- ============ Options ============ -->
+    <section id="stepOptions" class="panel narrow" hidden>
+      <div class="filechip"><span class="pdfbadge">PDF</span><b id="fileName">book.pdf</b></div>
+
       <div class="grid">
-        <label>Title <input id="title" type="text" autocomplete="off"></label>
-        <label>Author <input id="author" type="text" autocomplete="off"></label>
+        <label class="field"><span>Title</span><input id="title" type="text" autocomplete="off"></label>
+        <label class="field"><span>Author</span><input id="author" type="text" autocomplete="off" placeholder="Optional"></label>
       </div>
-      <fieldset>
-        <legend>Layout</legend>
-        <label class="radio"><input type="radio" name="mode" value="reflow" checked>
-          <span><b>Reflowable text</b> — best for reading; adapts to any screen and font size.</span></label>
-        <label class="radio"><input type="radio" name="mode" value="fixed">
-          <span><b>Fixed pages (images)</b> — keeps the exact look; works for scanned PDFs, comics and layouts.</span></label>
+
+      <fieldset class="opts">
+        <legend>How should it look?</legend>
+        <label class="opt">
+          <input type="radio" name="mode" value="reflow" checked>
+          <span class="opt-body"><span class="opt-ico">📝</span><span><b>Reflowable text</b><small>Best for reading. Adapts to any screen and font size.</small></span></span>
+        </label>
+        <label class="opt">
+          <input type="radio" name="mode" value="fixed">
+          <span class="opt-body"><span class="opt-ico">🖼️</span><span><b>Fixed pages</b><small>Keeps the exact look. Great for scans, formulas and layouts.</small></span></span>
+        </label>
       </fieldset>
-      <div id="fitRow" hidden>
-        <label class="radio">
-          <input type="checkbox" id="fit">
-          <span><b>Fit to this screen</b> — removes margins and headers, then cuts the book into screen-sized parts so it fills the reader. Recommended on phones.</span></label>
-        <label class="zoomsel">Reading zoom
-          <select id="zoom">
-            <option value="1">Standard — whole page width</option>
-            <option value="1.5" selected>Large — splits columns &amp; sidebars, text fills the width</option>
-          </select></label>
-        <label class="zoomsel">Reader margins
-          <select id="margins">
-            <option value="1.0">Small — reader uses the full width</option>
-            <option value="0.89" selected>Normal</option>
-            <option value="0.78">Large — reader adds wide margins</option>
-          </select></label>
-      </div>
-      <div class="grid range">
-        <label>From page <input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
-        <label>To page <input id="to" type="number" min="1" inputmode="numeric" placeholder="all"></label>
-      </div>
-      <p id="rangeHint" class="sub small">Tip: for big books convert one chapter at a time — it is faster and the files stay small.</p>
-      <div class="row">
-        <button id="convertBtn" class="btn primary">Convert to EPUB</button>
-        <button id="resetBtn1" class="btn ghost">Choose another</button>
-      </div>
-    </section>
 
-    <section id="stepProgress" class="card" hidden>
-      <h2>Converting…</h2>
-      <div class="bar"><i id="barFill"></i></div>
-      <p id="status" class="sub">Starting…</p>
-    </section>
-
-    <section id="stepResult" hidden>
-      <div class="card result-head">
-        <div>
-          <h2 id="resultTitle">Your book is ready</h2>
-          <p id="resultInfo" class="sub"></p>
-          <label class="fname">File name
-            <span class="fnrow"><input id="fname" type="text" autocomplete="off" aria-label="EPUB file name"><em>.epub</em></span></label>
+      <div id="fitRow" class="fitbox" hidden>
+        <label class="switch">
+          <span class="switch-text"><b>Fit to this screen</b><small>Trims margins and cuts pages to your screen shape. Recommended on phones.</small></span>
+          <input type="checkbox" id="fit"><span class="track"></span>
+        </label>
+        <div class="grid">
+          <label class="field"><span>Reading zoom</span>
+            <select id="zoom">
+              <option value="1">Standard (whole page)</option>
+              <option value="1.5" selected>Large (splits columns)</option>
+            </select></label>
+          <label class="field"><span>Reader margins</span>
+            <select id="margins">
+              <option value="1.0">Small (reader uses full width)</option>
+              <option value="0.89" selected>Normal</option>
+              <option value="0.78">Large (wide reader margins)</option>
+            </select></label>
         </div>
-        <div class="row">
-          <button id="readBtn" class="btn primary">📖 Read now</button>
-          <a id="downloadBtn" class="btn" download>⬇ Download EPUB</a>
-          <button id="shareBtn" class="btn" hidden>Share</button>
-          <button id="resetBtn2" class="btn ghost">Convert another</button>
+      </div>
+
+      <div class="grid range">
+        <label class="field"><span>From page</span><input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
+        <label class="field"><span>To page</span><input id="to" type="number" min="1" inputmode="numeric" placeholder="all"></label>
+      </div>
+      <p id="rangeHint" class="hint-line">Tip: for big books convert one chapter at a time &mdash; it is faster and the files stay small.</p>
+
+      <div class="actions">
+        <button id="convertBtn" class="btn primary lg block"><svg class="ico"><use href="#i-wand"/></svg>Convert to EPUB</button>
+        <button id="resetBtn1" class="btn text block">Choose another file</button>
+      </div>
+    </section>
+
+    <!-- ============ Progress ============ -->
+    <section id="stepProgress" class="panel narrow center" hidden>
+      <div class="spin big"></div>
+      <h2>Converting your book…</h2>
+      <div class="bar"><i id="barFill"></i></div>
+      <p id="status" class="muted">Starting…</p>
+    </section>
+
+    <!-- ============ Result ============ -->
+    <section id="stepResult" hidden>
+      <div class="panel result-head">
+        <div class="done">
+          <span class="done-ico"><svg class="ico big"><use href="#i-check"/></svg></span>
+          <div>
+            <h2 id="resultTitle">Your book is ready</h2>
+            <p id="resultInfo" class="muted"></p>
+          </div>
+        </div>
+        <label class="field fname"><span>File name</span>
+          <span class="fnrow"><input id="fname" type="text" autocomplete="off" aria-label="EPUB file name"><em>.epub</em></span></label>
+        <div class="actions row">
+          <button id="readBtn" class="btn primary lg"><svg class="ico"><use href="#i-book"/></svg>Read now</button>
+          <a id="downloadBtn" class="btn secondary lg" download><svg class="ico"><use href="#i-download"/></svg>Download</a>
+          <button id="shareBtn" class="btn secondary lg" hidden><svg class="ico"><use href="#i-share"/></svg>Share</button>
+          <button id="resetBtn2" class="btn text lg"><svg class="ico"><use href="#i-plus"/></svg>Convert another</button>
         </div>
       </div>
 
@@ -108,9 +167,10 @@
         <span id="pageInfo">–</span>
         <button id="nextBtn" class="btn round" aria-label="Next page">›</button>
       </div>
-      <p class="hint">Tap the page edges, swipe, or use ← → keys to turn pages.</p>
+      <p class="hint">Drag a page corner, tap the page edges, or use the ← → keys to turn pages.</p>
     </section>
-    <div id="busy" hidden><div class="spin"></div><span id="busyText">Opening…</span></div>
+
+    <div id="busy" hidden><div class="spin big"></div><span id="busyText">Opening…</span></div>
     <div id="rProg" class="rprog" hidden><i></i></div>
     <section id="stepReader" hidden>
       <div class="reader-bar">
@@ -128,7 +188,7 @@
     </section>
   </main>
 
-  <footer>v14 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v15 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
