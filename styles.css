@@ -107,3 +107,15 @@ body.reading .stage.reader { height: 100dvh; min-height: 0; }
 #stepReader.chrome-hidden .reader-bar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
 #stepReader.chrome-hidden .pager { transform: translateY(110%); opacity: 0; pointer-events: none; }
 .read-hint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #000b; color: #fff; padding: 8px 14px; border-radius: 99px; font-size: .85rem; z-index: 30; pointer-events: none; transition: opacity .6s; }
+
+/* Paper-fold page turn (drawn by book.js) */
+.leaf { transition: none !important; }
+.fold { position: absolute; z-index: 3000; pointer-events: none; }
+.fold > div { position: absolute; }
+.f-under { inset: 0; }
+.fpage { width: var(--pw); height: var(--ph); background: var(--paper); color: var(--paper-ink); overflow: hidden; }
+.f-flat { left: var(--pw); top: 0; background-image: linear-gradient(90deg, #00000026, transparent 7%); }
+.f-flapout { inset: 0; filter: drop-shadow(-3px 2px 7px rgba(0, 0, 0, .45)); }
+.f-flapclip { position: absolute; inset: 0; }
+.f-flap { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.f-flapshade { position: absolute; inset: 0; pointer-events: none; }
