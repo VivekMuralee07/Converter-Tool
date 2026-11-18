@@ -10,13 +10,15 @@ export class Book {
     this._bind();
   }
 
-  load(data) {
-    this.data = data; this.cur = 0; this._layout();
+  load(data, startFrac = 0) {
+    this.data = data; this.cur = 0; this._startFrac = startFrac; this._layout();
   }
+
+  progress() { return this.leaves.length ? this.cur / this.leaves.length : 0; }
 
   destroy() {
     this.measure.remove(); this.el.innerHTML = '';
-    removeEventListener('resize', this._onResize); removeEventListener('keydown', this._onKey);
+    this._ac.abort(); clearTimeout(this._t);
     (this.urls || []).forEach(URL.revokeObjectURL);
   }
 
@@ -26,14 +28,15 @@ export class Book {
       if (e.key === 'ArrowRight' || e.key === 'PageDown') this.next();
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') this.prev();
     };
-    addEventListener('resize', this._onResize); addEventListener('keydown', this._onKey);
+    this._ac = new AbortController(); const sig = { signal: this._ac.signal };
+    addEventListener('resize', this._onResize, sig); addEventListener('keydown', this._onKey, sig);
     // Drag to turn: the page follows the finger, then settles forward or back on release.
     let drag = null;
     const travel = () => this.pw * (this.spread === 2 ? 1.5 : 1);
     this.stage.addEventListener('pointerdown', (e) => {
       if (drag && drag.leaf) return;
       drag = { x: e.clientX, t: performance.now(), dir: 0, leaf: null, p: 0, id: e.pointerId };
-    });
+    }, sig);
     this.stage.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const dx = e.clientX - drag.x;
@@ -49,7 +52,7 @@ export class Book {
       const p = Math.max(0, Math.min(1, (drag.dir === 1 ? -dx : dx) / travel()));
       drag.p = p; drag.v = (e.clientX - (drag.lx ?? drag.x)) / Math.max(1, performance.now() - (drag.lt ?? drag.t)); drag.lx = e.clientX; drag.lt = performance.now();
       drag.leaf.style.transform = `rotateY(${drag.dir === 1 ? -180 * p : -180 + 180 * p}deg)`;
-    });
+    }, sig);
     const end = (e, cancelled) => {
       const d = drag; drag = null;
       if (!d) return;
@@ -66,14 +69,15 @@ export class Book {
       this._update();
       setTimeout(() => d.leaf.classList.remove('turning'), 1100); // in case no transition event fires
     };
-    this.stage.addEventListener('pointerup', (e) => end(e, false));
-    this.stage.addEventListener('pointercancel', (e) => end(e, true));
+    this.stage.addEventListener('pointerup', (e) => end(e, false), sig);
+    this.stage.addEventListener('pointercancel', (e) => end(e, true), sig);
   }
 
   _layout() {
     const aw = this.stage.clientWidth, ah = this.stage.clientHeight;
     this.spread = aw >= 820 ? 2 : 1;
-    const ratio = 0.72; // page width / height
+    // two-page spread: classic book proportion; single page: follow the screen shape so phones are filled
+    const ratio = this.spread === 2 ? 0.72 : Math.max(0.5, Math.min(0.8, (aw - 16) / (ah - 16)));
     let ph = Math.min(ah - 16, (aw - 24) / this.spread / ratio);
     ph = Math.max(280, Math.floor(ph));
     const pw = Math.floor(ph * ratio);
@@ -94,6 +98,7 @@ export class Book {
       this.el.appendChild(leaf); this.leaves.push(leaf);
     }
     this.cur = Math.min(count, Math.floor(keepPage / per));
+    if (this._startFrac != null) { this.cur = Math.min(Math.max(0, count - (per === 2 ? 0 : 1)), Math.round(this._startFrac * count)); this._startFrac = null; }
     this._update(true);
   }
 

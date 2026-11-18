@@ -29,6 +29,15 @@
       </label>
     </section>
 
+    <section id="stepLibrary" class="card">
+      <div class="lib-head">
+        <h2>My books</h2>
+        <label class="btn">📚 Open an EPUB<input id="epubFile" type="file" accept=".epub,application/epub+zip" hidden></label>
+      </div>
+      <p id="libEmpty" class="sub">Converted and opened books are kept here on your device, so you can read them again — even offline.</p>
+      <ul id="bookList" class="books"></ul>
+    </section>
+
     <section id="stepOptions" class="card" hidden>
       <h2 id="fileName">book.pdf</h2>
       <div class="grid">
@@ -82,7 +91,8 @@
           <p id="resultInfo" class="sub"></p>
         </div>
         <div class="row">
-          <a id="downloadBtn" class="btn primary" download>⬇ Download EPUB</a>
+          <button id="readBtn" class="btn primary">📖 Read now</button>
+          <a id="downloadBtn" class="btn" download>⬇ Download EPUB</a>
           <button id="shareBtn" class="btn" hidden>Share</button>
           <button id="resetBtn2" class="btn ghost">Convert another</button>
         </div>
@@ -98,9 +108,22 @@
       </div>
       <p class="hint">Tap the page edges, swipe, or use ← → keys to turn pages.</p>
     </section>
+    <section id="stepReader" hidden>
+      <div class="reader-bar">
+        <button id="rBack" class="btn ghost">← Back</button>
+        <strong id="rTitle"></strong>
+        <button id="rFull" class="btn ghost" aria-label="Full screen">⛶</button>
+      </div>
+      <div id="rStage" class="stage reader"><div id="rBook" class="book" aria-label="Book"></div></div>
+      <div class="pager">
+        <button id="rPrev" class="btn round" aria-label="Previous page">‹</button>
+        <span id="rInfo">–</span>
+        <button id="rNext" class="btn round" aria-label="Next page">›</button>
+      </div>
+    </section>
   </main>
 
-  <footer>v10 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v11 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
