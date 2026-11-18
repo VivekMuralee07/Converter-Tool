@@ -27,6 +27,72 @@ async function renderPage(page, scale, quality) {
   return out;
 }
 
+/* ---------- "fit to screen": trim margins, then cut pages into screen-shaped slices ---------- */
+const toBlob = (c, q) => new Promise((res) => c.toBlob(res, 'image/jpeg', q));
+
+async function renderCanvas(page, width) {
+  const vp = page.getViewport({ scale: width / page.getViewport({ scale: 1 }).width });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  return canvas;
+}
+
+// Bounding box of non-white pixels, as fractions of the canvas (null if blank).
+function contentBox(canvas) {
+  const { width: w, height: h } = canvas;
+  const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  let x0 = w, x1 = -1, y0 = h, y1 = -1;
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const i = (y * w + x) * 4;
+      if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+  }
+  return x1 < 0 ? null : { x0: x0 / w, x1: (x1 + 2) / w, y0: y0 / h, y1: (y1 + 2) / h };
+}
+
+async function sliceImage(blob, g, box, aspect) {
+  const bmp = await createImageBitmap(blob);
+  const W = bmp.width, H = bmp.height, pad = Math.round(W * 0.015);
+  const cx0 = Math.max(0, Math.floor(g.x0 * W) - pad), cx1 = Math.min(W, Math.ceil(g.x1 * W) + pad);
+  const cy0 = Math.max(0, Math.floor(box.y0 * H) - pad), cy1 = Math.min(H, Math.ceil(box.y1 * H) + pad);
+  const cw = cx1 - cx0, ch = cy1 - cy0;
+  const src = document.createElement('canvas'); src.width = cw; src.height = ch;
+  const sctx = src.getContext('2d', { willReadFrequently: true });
+  sctx.drawImage(bmp, cx0, cy0, cw, ch, 0, 0, cw, ch); bmp.close();
+  const data = sctx.getImageData(0, 0, cw, ch).data;
+  const blank = new Uint8Array(ch); // blank[y] = row is white
+  for (let y = 0; y < ch; y++) {
+    let ok = 1;
+    for (let x = 0; x < cw; x += 3) { const i = (y * cw + x) * 4; if (data[i] < 235 || data[i + 1] < 235 || data[i + 2] < 235) { ok = 0; break; } }
+    blank[y] = ok;
+  }
+  const sliceH = Math.round(cw / aspect);
+  const cuts = [];
+  let y = 0;
+  while (y < ch) {
+    let end = y + sliceH;
+    if (end >= ch) end = ch;
+    else { // prefer cutting on a blank row (between text lines) in the last 25% of the slice
+      for (let t = end; t > end - sliceH * 0.25; t--) if (blank[t]) { end = t; break; }
+    }
+    cuts.push([y, end]); y = end;
+  }
+  const out = [];
+  for (const [a, b] of cuts) {
+    if (b - a < 8 || blank.subarray(a, b).every((v) => v)) continue;
+    const c = document.createElement('canvas'); c.width = cw; c.height = b - a;
+    c.getContext('2d').drawImage(src, 0, a, cw, b - a, 0, 0, cw, b - a);
+    out.push({ blob: await toBlob(c, 0.85), w: cw, h: b - a });
+    c.width = c.height = 0;
+  }
+  src.width = src.height = 0;
+  return out;
+}
+
 /* ---------- text extraction ---------- */
 async function extractLines(page) {
   const vp = page.getViewport({ scale: 1 });
@@ -145,7 +211,7 @@ html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;h
 
 function uuid() { return 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); }
 
-export async function convert(file, { title, author, mode }, onProgress = () => {}) {
+export async function convert(file, { title, author, mode, fit = false, aspect = 0.5 }, onProgress = () => {}) {
   const { pdf } = await openPdf(file);
   const n = pdf.numPages;
   const cover = await renderPage(await pdf.getPage(1), 1.2, 0.8);
@@ -162,18 +228,47 @@ export async function convert(file, { title, author, mode }, onProgress = () => 
 
   if (fixed) {
     result.pageImages = [];
-    for (let i = 1; i <= n; i++) {
-      onProgress(i / n * 0.9, `Rendering page ${i} of ${n}`);
-      const img = i === 1 ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8);
-      const name = `p${String(i).padStart(4, '0')}`;
+    const add = (img, label, tocTitle) => {
+      const name = `p${String(result.pageImages.length + 1).padStart(4, '0')}`;
       zip.file(`OEBPS/${name}.jpg`, img.blob);
-      zip.file(`OEBPS/${name}.xhtml`, XHTML(`Page ${i}`, `<div class="fx"><img src="${name}.jpg" alt="Page ${i}"/></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
+      zip.file(`OEBPS/${name}.xhtml`, XHTML(label, `<div class="fx"><img src="${name}.jpg" alt="${esc(label)}" style="width:100%;height:auto"/></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
       manifest += `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"/><item id="${name}i" href="${name}.jpg" media-type="image/jpeg"/>`;
       spine += `<itemref idref="${name}"/>`;
-      toc.push({ href: `${name}.xhtml`, title: `Page ${i}` });
+      if (tocTitle) toc.push({ href: `${name}.xhtml`, title: tocTitle });
       result.pageImages.push(img.blob);
-      await sleep0();
+    };
+    if (fit) {
+      // pass 1: render each page, measure its content box
+      const pages = [];
+      let g = null;
+      for (let i = 1; i <= n; i++) {
+        onProgress(i / n * 0.45, `Rendering page ${i} of ${n}`);
+        const c = await renderCanvas(await pdf.getPage(i), 1100);
+        const box = contentBox(c);
+        pages.push({ blob: await toBlob(c, 0.9), box });
+        c.width = c.height = 0;
+        if (box) g = g ? { x0: Math.min(g.x0, box.x0), x1: Math.max(g.x1, box.x1) } : { x0: box.x0, x1: box.x1 };
+        await sleep0();
+      }
+      // pass 2: trim margins and cut into screen-shaped pieces
+      result.skipFirst = false;
+      for (let i = 0; i < n; i++) {
+        onProgress(0.45 + (i + 1) / n * 0.45, `Fitting page ${i + 1} of ${n} to screen`);
+        if (!pages[i].box) continue;
+        const slices = await sliceImage(pages[i].blob, g, pages[i].box, aspect);
+        slices.forEach((sl, k) => add(sl, `Page ${i + 1}${k ? ` (part ${k + 1})` : ''}`, k ? null : `Page ${i + 1}`));
+        pages[i].blob = null;
+        await sleep0();
+      }
+    } else {
+      result.skipFirst = true;
+      for (let i = 1; i <= n; i++) {
+        onProgress(i / n * 0.9, `Rendering page ${i} of ${n}`);
+        add(i === 1 ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8), `Page ${i}`, `Page ${i}`);
+        await sleep0();
+      }
     }
+    if (!result.pageImages.length) { add(cover, 'Page 1', 'Page 1'); }
   } else {
     const raw = [];
     for (let i = 1; i <= n; i++) {

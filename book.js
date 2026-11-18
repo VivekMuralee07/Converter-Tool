@@ -74,7 +74,7 @@ export class Book {
       ? `<div class="page cover"><img src="${coverUrl}" alt="Cover"></div>`
       : `<div class="page cover"><h1>${esc(d.title)}</h1><p>${esc(d.author || '')}</p></div>`);
     if (d.pageImages) {
-      d.pageImages.forEach((b, i) => { if (i === 0) return; out.push(`<div class="page imgpage"><img src="${this._url(b)}" alt="Page ${i + 1}"></div>`); });
+      d.pageImages.forEach((b, i) => { if (i === 0 && d.skipFirst) return; out.push(`<div class="page imgpage"><img src="${this._url(b)}" alt="Page ${i + 1}"></div>`); });
       return out;
     }
     const m = this.measure; m.innerHTML = '';
