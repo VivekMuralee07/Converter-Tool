@@ -40,47 +40,81 @@ async function renderCanvas(page, width) {
   return canvas;
 }
 
-// Bounding box of the page body as fractions of the canvas (null if blank). A running header/footer
-// (a thin ink band in the top/bottom edge, separated from the body by a gap) is left out.
-function contentBox(canvas) {
-  const { width: w, height: h } = canvas;
-  const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
-  const rows = []; // [y, minX, maxX] for rows that contain ink
-  for (let y = 0; y < h; y += 2) {
-    let mn = w, mx = -1;
-    for (let x = 0; x < w; x += 2) {
-      const i = (y * w + x) * 4;
-      if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < mn) mn = x; mx = x; }
-    }
-    if (mx >= 0) rows.push([y, mn, mx]);
-  }
-  if (!rows.length) return null;
-  const segs = []; // groups of ink rows separated by gaps >= 1.2% of the page height
-  for (const r of rows) {
-    const last = segs[segs.length - 1];
-    if (last && r[0] - last[last.length - 1][0] < h * 0.012) last.push(r); else segs.push([r]);
-  }
-  if (segs.length > 1 && segs[0][0][0] < h * 0.1) segs.shift();
-  if (segs.length > 1 && segs[segs.length - 1][0][0] > h * 0.9) segs.pop();
-  const body = segs.flat();
-  return {
-    x0: Math.min(...body.map((r) => r[1])) / w, x1: (Math.max(...body.map((r) => r[2])) + 2) / w,
-    y0: body[0][0] / h, y1: (body[body.length - 1][0] + 2) / h,
-  };
+// ---- page analysis: find the body, its bands and columns on a downscaled copy of the page ----
+function analyze(big, smallW = 600) {
+  const f = big.width / smallW, h = Math.round(big.height / f);
+  const sm = document.createElement('canvas'); sm.width = smallW; sm.height = h;
+  const c = sm.getContext('2d', { willReadFrequently: true });
+  c.drawImage(big, 0, 0, smallW, h);
+  const d = c.getImageData(0, 0, smallW, h).data;
+  sm.width = sm.height = 0;
+  const ink = new Uint8Array(smallW * h);
+  for (let p = 0, i = 0; p < ink.length; p++, i += 4) ink[p] = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000 < 222 ? 1 : 0;
+  const mn = new Int32Array(h).fill(-1), mx = new Int32Array(h).fill(-1);
+  for (let y = 0; y < h; y++) for (let x = 0; x < smallW; x++) if (ink[y * smallW + x]) { if (mn[y] < 0) mn[y] = x; mx[y] = x; }
+  return { ink, w: smallW, h, f, mn, mx };
 }
 
-// Joins page bodies into one tall strip (all scaled to the same width) and cuts it into screen-shaped
-// slices, preferring blank rows, so every slice fills the reader's screen.
-function makeStripper(aspect, emit) {
-  const Wc = 1000, sliceH = Math.round(Wc / aspect), GAP = 28;
+function groupRows(a, y0, y1, gap) { // runs of ink rows separated by more than `gap` blank rows
+  const segs = []; let cur = null;
+  for (let y = y0; y <= y1; y++) if (a.mn[y] >= 0) { if (cur && y - cur.y1 <= gap) cur.y1 = y; else { cur = { y0: y, y1: y }; segs.push(cur); } }
+  return segs;
+}
+
+// Page body = everything except a running header/footer (thin band at the edge, set apart by a gap).
+function findBody(a) {
+  const segs = groupRows(a, 0, a.h - 1, Math.round(a.h * 0.012));
+  if (!segs.length) return null;
+  if (segs.length > 1 && segs[0].y1 < a.h * 0.12) segs.shift();
+  if (segs.length > 1 && segs[segs.length - 1].y0 > a.h * 0.9) segs.pop();
+  const y0 = segs[0].y0, y1 = segs[segs.length - 1].y1;
+  let x0 = a.w, x1 = 0;
+  for (let y = y0; y <= y1; y++) if (a.mn[y] >= 0) { if (a.mn[y] < x0) x0 = a.mn[y]; if (a.mx[y] > x1) x1 = a.mx[y]; }
+  return { x0, x1, y0, y1 };
+}
+
+// Split a band into side-by-side columns where a clear vertical gutter runs through its whole height.
+function splitColumns(a, band, x0, x1) {
+  const bh = band.y1 - band.y0 + 1;
+  if (bh < a.h * 0.11) return [{ x0, x1 }];
+  const col = new Int32Array(a.w);
+  for (let y = band.y0; y <= band.y1; y++) { const o = y * a.w; for (let x = x0; x <= x1; x++) col[x] += a.ink[o + x]; }
+  const gutMin = Math.max(8, Math.round(a.w * 0.025)), minCol = Math.round(a.w * 0.11), speck = bh * 0.01;
+  const cols = []; let start = x0, run = 0, runStart = 0;
+  for (let x = x0; x <= x1; x++) {
+    if (col[x] <= speck) { if (!run) runStart = x; run++; }
+    else { if (run >= gutMin && runStart > start) { cols.push({ x0: start, x1: runStart - 1 }); start = x; } run = 0; }
+  }
+  cols.push({ x0: start, x1 });
+  return cols.length > 1 && cols.every((c) => c.x1 - c.x0 >= minCol) ? cols : [{ x0, x1 }];
+}
+
+// Segments to show, in reading order (small-image coordinates). `split` = detect bands/columns.
+function planSegments(a, split) {
+  const body = findBody(a);
+  if (!body) return null;
+  if (!split) return { body, segs: [body] };
+  const segs = [];
+  for (const band of groupRows(a, body.y0, body.y1, Math.max(4, Math.round(a.h * 0.007)))) {
+    let x0 = a.w, x1 = 0;
+    for (let y = band.y0; y <= band.y1; y++) if (a.mn[y] >= 0) { if (a.mn[y] < x0) x0 = a.mn[y]; if (a.mx[y] > x1) x1 = a.mx[y]; }
+    for (const c of splitColumns(a, band, x0, x1)) segs.push({ x0: c.x0, x1: c.x1, y0: band.y0, y1: band.y1 });
+  }
+  return { body, segs };
+}
+
+// Joins segments into one tall strip and cuts it into slices shaped like the screen, preferring
+// uniform (blank) rows so text lines aren't sliced.
+function makeStripper(aspect, Wc, emit) {
+  const sliceH = Math.round(Wc / aspect), GAP = Math.round(Wc * 0.012);
   let strip = document.createElement('canvas'); strip.width = Wc; strip.height = sliceH * 3;
   let sctx = strip.getContext('2d', { willReadFrequently: true });
   sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, Wc, strip.height);
   let pendH = 0;
 
-  const blankRow = (data, y, bandTop) => { // data from getImageData(0, bandTop, Wc, n)
-    const o = (y - bandTop) * Wc * 4;
-    for (let x = 0; x < Wc; x++) { const i = o + x * 4; if (data[i] < 235 || data[i + 1] < 235 || data[i + 2] < 235) return false; }
+  const flatRow = (data, y, top) => {
+    const o = (y - top) * Wc * 4; let mn = 255, mx = 0;
+    for (let x = 0; x < Wc; x++) { const g = data[o + x * 4 + 1]; if (g < mn) mn = g; if (g > mx) mx = g; if (mx - mn > 40) return false; }
     return true;
   };
   async function cut(final) {
@@ -88,15 +122,15 @@ function makeStripper(aspect, emit) {
       let end = Math.min(pendH, sliceH);
       if (pendH > sliceH) {
         const top = Math.floor(sliceH * 0.72), data = sctx.getImageData(0, top, Wc, sliceH - top).data;
-        for (let t = sliceH; t > top; t--) if (t < pendH && blankRow(data, t - 1, top)) { end = t; break; }
+        for (let t = sliceH; t > top; t--) if (t < pendH && flatRow(data, t - 1, top)) { end = t; break; }
       }
       const full = sctx.getImageData(0, 0, Wc, end).data;
       let ink = false;
-      for (let i = 0; i < full.length; i += 16) if (full[i] < 235) { ink = true; break; }
+      for (let i = 1; i < full.length; i += 16) if (full[i] < 200) { ink = true; break; }
       if (ink) {
         const c = document.createElement('canvas'); c.width = Wc; c.height = end;
         c.getContext('2d').drawImage(strip, 0, 0, Wc, end, 0, 0, Wc, end);
-        await emit({ blob: await toBlob(c, 0.85), w: Wc, h: end });
+        await emit({ blob: await toBlob(c, 0.8), w: Wc, h: end });
         c.width = c.height = 0;
       }
       sctx.drawImage(strip, 0, end, Wc, pendH - end, 0, 0, Wc, pendH - end);
@@ -106,22 +140,18 @@ function makeStripper(aspect, emit) {
     }
   }
   return {
-    async addPage(blob, g, box) {
-      const bmp = await createImageBitmap(blob);
-      const W = bmp.width, H = bmp.height, pad = Math.round(W * 0.015);
-      const cx0 = Math.max(0, Math.floor(g.x0 * W) - pad), cx1 = Math.min(W, Math.ceil(g.x1 * W) + pad);
-      const cy0 = Math.max(0, Math.floor(box.y0 * H) - pad), cy1 = Math.min(H, Math.ceil(box.y1 * H) + pad);
-      const dh = Math.round((cy1 - cy0) * Wc / (cx1 - cx0));
+    async addSeg(src, sx, sy, sw, sh, dw, dh) {
       if (pendH + dh + GAP > strip.height) { // grow the strip
         const n = document.createElement('canvas'); n.width = Wc; n.height = pendH + dh + GAP + sliceH;
         const nc = n.getContext('2d', { willReadFrequently: true }); nc.fillStyle = '#fff'; nc.fillRect(0, 0, n.width, n.height);
         nc.drawImage(strip, 0, 0); strip.width = strip.height = 0; strip = n; sctx = nc;
       }
-      sctx.drawImage(bmp, cx0, cy0, cx1 - cx0, cy1 - cy0, 0, pendH, Wc, dh); bmp.close();
-      pendH += dh + GAP;
-      await cut(false);
+      sctx.drawImage(src, sx, sy, sw, sh, Math.round(Wc * 0.015), pendH, dw, dh);
+      pendH += dh + Math.round(GAP / 2);
     },
+    async endPage() { pendH += GAP; await cut(false); },
     finish: () => cut(true),
+    get pending() { return pendH; },
   };
 }
 
@@ -210,7 +240,7 @@ function buildBlocks(pagesLines) {
   return blocks;
 }
 
-function chunkChapters(blocks, pageCount, title) {
+function chunkChapters(blocks, pageCount, title, offset = 0) {
   const h1s = blocks.filter((b) => b.t === 'h1').length;
   const chapters = [];
   if (h1s >= 2) {
@@ -223,7 +253,7 @@ function chunkChapters(blocks, pageCount, title) {
     const per = 10;
     for (let s = 0; s < pageCount; s += per) {
       const bl = blocks.filter((b) => b.page >= s && b.page < s + per);
-      if (bl.length) chapters.push({ title: pageCount <= per ? title : `Pages ${s + 1}–${Math.min(pageCount, s + per)}`, blocks: bl });
+      if (bl.length) chapters.push({ title: pageCount <= per ? title : `Pages ${offset + s + 1}–${offset + Math.min(pageCount, s + per)}`, blocks: bl });
     }
   }
   return chapters.length ? chapters : [{ title, blocks: [{ t: 'p', text: '(No extractable text found.)' }] }];
@@ -243,10 +273,12 @@ html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;h
 
 function uuid() { return 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); }
 
-export async function convert(file, { title, author, mode, fit = false, aspect = 0.5 }, onProgress = () => {}) {
+export async function convert(file, { title, author, mode, fit = false, aspect = 0.5, zoom = 1.5, from = 1, to = 0 }, onProgress = () => {}) {
   const { pdf } = await openPdf(file);
-  const n = pdf.numPages;
-  const cover = await renderPage(await pdf.getPage(1), 1.2, 0.8);
+  const total = pdf.numPages;
+  const first = Math.min(total, Math.max(1, from | 0 || 1)), last = Math.min(total, Math.max(first, to | 0 || total));
+  const n = last - first + 1; // pages converted
+  const cover = await renderPage(await pdf.getPage(first), 1.2, 0.8);
   const zip = new JSZip();
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
   zip.file('META-INF/container.xml', `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
@@ -270,27 +302,28 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
       result.pageImages.push(img.blob);
     };
     if (fit) {
-      // pass 1: render each page, measure its content box
-      const pages = [];
-      let g = null;
-      for (let i = 1; i <= n; i++) {
-        onProgress(i / n * 0.45, `Rendering page ${i} of ${n}`);
-        const c = await renderCanvas(await pdf.getPage(i), 1100);
-        const box = contentBox(c);
-        pages.push({ blob: await toBlob(c, 0.9), box });
-        c.width = c.height = 0;
-        if (box) g = g ? { x0: Math.min(g.x0, box.x0), x1: Math.max(g.x1, box.x1) } : { x0: box.x0, x1: box.x1 };
-        await sleep0();
-      }
-      // pass 2: join the page bodies into one strip and cut it into screen-shaped slices
       result.skipFirst = false;
+      const Wc = 1100, split = zoom > 1;
       let emitted = 0;
       const starts = [];
-      const strip = makeStripper(aspect, (img) => { emitted++; add(img, `Part ${emitted}`, null); });
-      for (let i = 0; i < n; i++) {
-        onProgress(0.45 + (i + 1) / n * 0.45, `Fitting page ${i + 1} of ${n} to screen`);
-        if (pages[i].box && g) { starts.push({ slice: emitted + 1, title: `Page ${i + 1}` }); await strip.addPage(pages[i].blob, g, pages[i].box); }
-        pages[i].blob = null;
+      const strip = makeStripper(aspect, Wc, (img) => { emitted++; add(img, `Part ${emitted}`, null); });
+      for (let k = 0; k < n; k++) {
+        const pageNo = first + k;
+        onProgress((k + 1) / n * 0.95, `Fitting page ${pageNo} (${k + 1} of ${n}) to screen`);
+        const big = await renderCanvas(await pdf.getPage(pageNo), Math.round(Wc * zoom * 1.3));
+        const a = analyze(big), plan = planSegments(a, split);
+        if (plan) {
+          starts.push({ slice: emitted + 1, title: `Page ${pageNo}` });
+          const f = a.f, pad = Math.round(5 * f), baseScale = Wc * 0.97 / ((plan.body.x1 - plan.body.x0 + 1) * f + 2 * pad);
+          for (const sg of plan.segs) {
+            const sx = Math.max(0, Math.floor(sg.x0 * f) - pad), sy = Math.max(0, Math.floor(sg.y0 * f) - pad);
+            const sw = Math.min(big.width - sx, Math.ceil((sg.x1 + 1) * f) + pad - sx), sh = Math.min(big.height - sy, Math.ceil((sg.y1 + 1) * f) + pad - sy);
+            const sc = Math.min(Wc * 0.97 / sw, baseScale * zoom);
+            await strip.addSeg(big, sx, sy, sw, sh, Math.round(sw * sc), Math.round(sh * sc));
+          }
+          await strip.endPage();
+        }
+        big.width = big.height = 0;
         await sleep0();
       }
       await strip.finish();
@@ -298,17 +331,17 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
       starts.forEach((t) => emitted && toc.push({ href: pad4(t.slice), title: t.title }));
     } else {
       result.skipFirst = true;
-      for (let i = 1; i <= n; i++) {
-        onProgress(i / n * 0.9, `Rendering page ${i} of ${n}`);
-        add(i === 1 ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8), `Page ${i}`, `Page ${i}`);
+      for (let i = first; i <= last; i++) {
+        onProgress((i - first + 1) / n * 0.9, `Rendering page ${i} of ${last}`);
+        add(i === first ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8), `Page ${i}`, `Page ${i}`);
         await sleep0();
       }
     }
     if (!result.pageImages.length) { add(cover, 'Page 1', 'Page 1'); }
   } else {
     const raw = [];
-    for (let i = 1; i <= n; i++) {
-      onProgress(i / n * 0.8, `Reading page ${i} of ${n}`);
+    for (let i = first; i <= last; i++) {
+      onProgress((i - first + 1) / n * 0.8, `Reading page ${i} of ${last}`);
       raw.push(await extractLines(await pdf.getPage(i)));
       await sleep0();
     }
@@ -318,7 +351,7 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
     result.hasText = blocks.length > 0;
     const flat = raw.flat();
     result.messy = flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
-    const chapters = chunkChapters(blocks, n, title);
+    const chapters = chunkChapters(blocks, n, title, first - 1);
     chapters.forEach((c, i) => {
       const name = `c${String(i + 1).padStart(3, '0')}`;
       const body = c.blocks.map((b) => (b.t === 'p' ? `<p>${esc(b.text)}</p>` : `<${b.t}>${esc(b.text)}</${b.t}>`)).join('\n');
