@@ -33,6 +33,9 @@ function reset() {
 async function run() {
   show('stepProgress');
   const opts = { title: $('title').value.trim() || 'Untitled', author: $('author').value.trim(), mode: document.querySelector('input[name=mode]:checked').value };
+  opts.fit = opts.mode === 'fixed' && $('fit').checked;
+  const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
+  opts.aspect = Math.max(0.4, Math.min(0.75, sw / (sh * 0.9))); // leave room for the reader's own bars
   try {
     const res = await convert(file, opts, (p, msg) => { $('barFill').style.width = Math.round(p * 100) + '%'; $('status').textContent = msg; });
     const fname = opts.title.replace(/[\\/:*?"<>|]+/g, '').trim() || 'book';
@@ -62,6 +65,9 @@ const drop = $('drop');
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+const syncFit = () => { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; };
+document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', syncFit));
+$('fit').checked = innerWidth < 820;
 $('convertBtn').onclick = run;
 $('resetBtn1').onclick = $('resetBtn2').onclick = reset;
 $('prevBtn').onclick = () => book && book.prev();
