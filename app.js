@@ -5,7 +5,7 @@ const $ = (id) => document.getElementById(id);
 const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult'];
 const show = (id) => steps.forEach((s) => ($(s).hidden = s !== id));
 
-let file = null, book = null, downloadUrl = null;
+let file = null, book = null, downloadUrl = null, totalPages = 0;
 
 async function pick(f) {
   if (!f) return;
@@ -13,13 +13,14 @@ async function pick(f) {
   file = f;
   $('fileName').textContent = f.name;
   $('title').value = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
-  $('author').value = '';
+  $('author').value = ''; $('from').value = ''; $('to').value = ''; syncFit();
   show('stepOptions');
   try { // prefill from PDF metadata
     const { openPdf } = await import('./converter.js');
     const { meta, pdf } = await openPdf(f);
     if (meta.Title && meta.Title.trim()) $('title').value = meta.Title.trim();
     if (meta.Author) $('author').value = meta.Author.trim();
+    totalPages = pdf.numPages; $('to').placeholder = totalPages; $('rangeHint').textContent = `This PDF has ${totalPages} pages. Tip: for big books convert one chapter at a time — it is faster and the files stay small.`;
     pdf.destroy();
   } catch { /* metadata is optional */ }
 }
@@ -34,6 +35,8 @@ async function run() {
   show('stepProgress');
   const opts = { title: $('title').value.trim() || 'Untitled', author: $('author').value.trim(), mode: document.querySelector('input[name=mode]:checked').value };
   opts.fit = opts.mode === 'fixed' && $('fit').checked;
+  opts.zoom = parseFloat($('zoom').value) || 1.5;
+  opts.from = parseInt($('from').value, 10) || 1; opts.to = parseInt($('to').value, 10) || 0;
   const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
   opts.aspect = Math.max(0.4, Math.min(0.75, sw / (sh * 0.9))); // leave room for the reader's own bars
   try {
@@ -65,7 +68,8 @@ const drop = $('drop');
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
-const syncFit = () => { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; };
+function syncFit() { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; $('zoom').disabled = !$('fit').checked; }
+$('fit').addEventListener('change', syncFit);
 document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', syncFit));
 $('fit').checked = innerWidth < 820;
 $('convertBtn').onclick = run;

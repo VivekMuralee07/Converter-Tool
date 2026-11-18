@@ -42,9 +42,22 @@
         <label class="radio"><input type="radio" name="mode" value="fixed">
           <span><b>Fixed pages (images)</b> — keeps the exact look; works for scanned PDFs, comics and layouts.</span></label>
       </fieldset>
-      <label id="fitRow" class="radio" hidden>
-        <input type="checkbox" id="fit">
-        <span><b>Fit to this screen</b> — trims margins and splits each page into screen-sized parts, so text is bigger and fills the reader. Recommended on phones.</span></label>
+      <div id="fitRow" hidden>
+        <label class="radio">
+          <input type="checkbox" id="fit">
+          <span><b>Fit to this screen</b> — removes margins and headers, then cuts the book into screen-sized parts so it fills the reader. Recommended on phones.</span></label>
+        <label class="zoomsel">Reading zoom
+          <select id="zoom">
+            <option value="1">Standard — whole page width</option>
+            <option value="1.5" selected>Large — splits columns &amp; sidebars, 1.5× text</option>
+            <option value="2.2">Extra large — splits columns, 2.2× text</option>
+          </select></label>
+      </div>
+      <div class="grid range">
+        <label>From page <input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
+        <label>To page <input id="to" type="number" min="1" inputmode="numeric" placeholder="all"></label>
+      </div>
+      <p id="rangeHint" class="sub small">Tip: for big books convert one chapter at a time — it is faster and the files stay small.</p>
       <div class="row">
         <button id="convertBtn" class="btn primary">Convert to EPUB</button>
         <button id="resetBtn1" class="btn ghost">Choose another</button>
@@ -82,7 +95,7 @@
     </section>
   </main>
 
-  <footer>v6 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v7 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>

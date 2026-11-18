@@ -78,3 +78,8 @@ legend { color: var(--muted); font-size: .85rem; padding: 0 6px; }
 .hint { text-align: center; color: var(--muted); font-size: .8rem; margin: 6px 0 0; }
 .measure { position: absolute; visibility: hidden; left: -99999px; top: 0; }
 @media (prefers-reduced-motion: reduce) { .leaf, .book { transition-duration: .01s; } }
+
+input[type=number], select { width: 100%; margin-top: 4px; padding: 10px 12px; border-radius: 10px; border: 1px solid #ffffff22; background: #0003; color: var(--ink); font-size: 1rem; }
+select option { background: #232a3d; }
+.zoomsel { margin: 4px 0 16px 28px; }
+.small { font-size: .8rem; margin-top: -6px; }
