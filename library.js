@@ -30,3 +30,7 @@ export async function setProgress(id, progress) {
   const rec = await getBook(id);
   if (rec) { rec.progress = progress; rec.opened = Date.now(); await saveBook(rec); }
 }
+export async function renameBook(id, title) {
+  const rec = await getBook(id);
+  if (rec) { rec.title = title; await saveBook(rec); }
+}
