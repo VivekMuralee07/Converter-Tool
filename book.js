@@ -2,8 +2,9 @@
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 export class Book {
-  constructor(stage, book, onChange) {
-    this.stage = stage; this.el = book; this.onChange = onChange;
+  // opts: { margin: px kept free around the book, onCenterTap: called when the middle of the page is tapped }
+  constructor(stage, book, onChange, opts = {}) {
+    this.opts = opts; this.stage = stage; this.el = book; this.onChange = onChange;
     this.pages = []; this.leaves = []; this.cur = 0; this.spread = 1;
     this.measure = document.createElement('div'); this.measure.className = 'measure';
     document.body.appendChild(this.measure);
@@ -59,6 +60,8 @@ export class Book {
       if (!d.dir) { // a tap: left/right side turns the page
         if (cancelled) return;
         const r = this.el.getBoundingClientRect(), rel = (e.clientX - r.left) / r.width;
+        if (this.opts.onCenterTap && rel > 0.3 && rel < 0.7) return this.opts.onCenterTap();
+        if (this.opts.onCenterTap) return rel >= 0.7 ? this.next() : this.prev();
         return (rel > (this.spread === 2 ? 0.5 : 0.3)) ? this.next() : this.prev();
       }
       const flick = d.dir * -d.v > 0.5; // fast swipe in the turning direction
@@ -77,8 +80,9 @@ export class Book {
     const aw = this.stage.clientWidth, ah = this.stage.clientHeight;
     this.spread = aw >= 820 ? 2 : 1;
     // two-page spread: classic book proportion; single page: follow the screen shape so phones are filled
-    const ratio = this.spread === 2 ? 0.72 : Math.max(0.5, Math.min(0.8, (aw - 16) / (ah - 16)));
-    let ph = Math.min(ah - 16, (aw - 24) / this.spread / ratio);
+    const m = this.opts.margin ?? 16;
+    const ratio = this.spread === 2 ? 0.72 : Math.max(0.5, Math.min(0.8, (aw - m) / (ah - m)));
+    let ph = Math.min(ah - m, (aw - m - 8) / this.spread / ratio);
     ph = Math.max(280, Math.floor(ph));
     const pw = Math.floor(ph * ratio);
     this.ph = ph; this.pw = pw;

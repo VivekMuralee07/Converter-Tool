@@ -131,10 +131,15 @@ function openReader(data, id, startFrac = 0, from = 'stepPick') {
   $('rTitle').textContent = data.title;
   show('stepReader');
   let t;
+  const reader = $('stepReader');
+  reader.classList.add('chrome-hidden'); // immersive by default; tap the middle of the page for controls
   readerBook = new Book($('rStage'), $('rBook'), (s) => {
     $('rInfo').textContent = s.label; $('rPrev').disabled = !s.canPrev; $('rNext').disabled = !s.canNext;
     clearTimeout(t); t = setTimeout(() => id && readerBook && setProgress(id, readerBook.progress()).catch(() => {}), 600);
-  });
+  }, { margin: 6, onCenterTap: () => reader.classList.toggle('chrome-hidden') });
+  const hint = Object.assign(document.createElement('div'), { className: 'read-hint', textContent: 'Tap the middle of the page for controls' });
+  document.body.appendChild(hint);
+  setTimeout(() => (hint.style.opacity = 0), 2500); setTimeout(() => hint.remove(), 3200);
   readerBook.load(data, startFrac);
 }
 

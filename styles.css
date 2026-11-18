@@ -97,3 +97,13 @@ select option { background: #232a3d; }
 .reader-bar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stage.reader { height: calc(100dvh - 150px); min-height: 320px; }
 body.reading main { padding-top: 0; } body.reading .top, body.reading footer { display: none; }
+
+/* Immersive reader: the book fills the screen; bars only show after tapping the middle of the page */
+body.reading main { padding: 0; max-width: none; }
+body.reading .stage.reader { height: 100dvh; min-height: 0; }
+#stepReader .reader-bar, #stepReader .pager { position: fixed; left: 0; right: 0; z-index: 20; transition: transform .25s ease, opacity .25s ease; }
+#stepReader .reader-bar { top: 0; padding: calc(env(safe-area-inset-top) + 8px) 12px 14px; background: linear-gradient(#10141f, #10141fe6 70%, #10141f00); }
+#stepReader .pager { bottom: 0; margin: 0; padding: 16px 0 calc(env(safe-area-inset-bottom) + 12px); background: linear-gradient(#10141f00, #10141fe6 30%, #10141f); }
+#stepReader.chrome-hidden .reader-bar { transform: translateY(-110%); opacity: 0; pointer-events: none; }
+#stepReader.chrome-hidden .pager { transform: translateY(110%); opacity: 0; pointer-events: none; }
+.read-hint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: #000b; color: #fff; padding: 8px 14px; border-radius: 99px; font-size: .85rem; z-index: 30; pointer-events: none; transition: opacity .6s; }
