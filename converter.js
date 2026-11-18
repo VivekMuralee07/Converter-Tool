@@ -310,16 +310,27 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
       for (let k = 0; k < n; k++) {
         const pageNo = first + k;
         onProgress((k + 1) / n * 0.95, `Fitting page ${pageNo} (${k + 1} of ${n}) to screen`);
-        const big = await renderCanvas(await pdf.getPage(pageNo), Math.round(Wc * zoom * 1.3));
+        const big = await renderCanvas(await pdf.getPage(pageNo), Math.round(Wc * (split ? 2.1 : 1) * 1.3));
         const a = analyze(big), plan = planSegments(a, split);
         if (plan) {
           starts.push({ slice: emitted + 1, title: `Page ${pageNo}` });
-          const f = a.f, pad = Math.round(5 * f), baseScale = Wc * 0.97 / ((plan.body.x1 - plan.body.x0 + 1) * f + 2 * pad);
-          for (const sg of plan.segs) {
+          const f = a.f, pad = Math.round(5 * f), fillW = Wc * 0.97;
+          const rects = plan.segs.map((sg) => {
             const sx = Math.max(0, Math.floor(sg.x0 * f) - pad), sy = Math.max(0, Math.floor(sg.y0 * f) - pad);
-            const sw = Math.min(big.width - sx, Math.ceil((sg.x1 + 1) * f) + pad - sx), sh = Math.min(big.height - sy, Math.ceil((sg.y1 + 1) * f) + pad - sy);
-            const sc = Math.min(Wc * 0.97 / sw, baseScale * zoom);
-            await strip.addSeg(big, sx, sy, sw, sh, Math.round(sw * sc), Math.round(sh * sc));
+            return { sx, sy, sw: Math.min(big.width - sx, Math.ceil((sg.x1 + 1) * f) + pad - sx), sh: Math.min(big.height - sy, Math.ceil((sg.y1 + 1) * f) + pad - sy) };
+          });
+          // One text size per page: the main column (height-weighted median width, ignoring slivers) fills the
+          // width; wider items (figures) shrink to fit, narrower ones (sidebars) are not blown up.
+          let pageScale = fillW / ((plan.body.x1 - plan.body.x0 + 1) * f + 2 * pad);
+          if (split) {
+            const main = rects.filter((r) => r.sw >= big.width * 0.22).sort((p, q) => p.sw - q.sw);
+            const tot = main.reduce((t, r) => t + r.sh, 0);
+            let acc = 0;
+            for (const r of main) { acc += r.sh; if (acc >= tot / 2) { pageScale = fillW / r.sw; break; } }
+          }
+          for (const r of rects) {
+            const sc = Math.min(fillW / r.sw, pageScale);
+            await strip.addSeg(big, r.sx, r.sy, r.sw, r.sh, Math.round(r.sw * sc), Math.round(r.sh * sc));
           }
           await strip.endPage();
         }
