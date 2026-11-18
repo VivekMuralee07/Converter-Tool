@@ -1,5 +1,5 @@
 // Offline-first service worker for the app shell. Bump VERSION to refresh caches.
-const VERSION = 'v7';
+const VERSION = 'v8';
 const CACHE = `pdf2epub-${VERSION}`;
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './converter.js', './book.js',
