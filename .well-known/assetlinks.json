@@ -1,1 +1,8 @@
-[]
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "com.onrender.viveks_converter_tool.twa",
+        "sha256_cert_fingerprints": ["66:87:3F:C2:2F:63:85:6A:3F:7C:5E:81:97:E9:32:1B:C4:37:20:BD:9E:A7:7B:0E:F0:94:26:09:15:57:7D:00"]
+      }
+    }]
