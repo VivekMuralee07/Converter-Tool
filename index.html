@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>PDF to EPUB Book Converter</title>
+  <meta name="description" content="Convert PDF files to EPUB books on your device, with a page-turning book preview.">
+  <meta name="theme-color" content="#1a1f2e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img src="icons/icon-192.png" alt="" width="36" height="36"><span>PDF <b>→</b> EPUB</span></div>
+    <button id="installBtn" class="btn ghost" hidden>Install app</button>
+  </header>
+
+  <main>
+    <section id="stepPick" class="card">
+      <h1>Turn any PDF into a book</h1>
+      <p class="sub">Runs entirely on your device — your files are never uploaded.</p>
+      <label id="drop" class="drop" tabindex="0">
+        <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+        <span class="drop-ico">📖</span>
+        <strong>Tap to choose a PDF</strong>
+        <small>or drag &amp; drop it here</small>
+      </label>
+    </section>
+
+    <section id="stepOptions" class="card" hidden>
+      <h2 id="fileName">book.pdf</h2>
+      <div class="grid">
+        <label>Title <input id="title" type="text" autocomplete="off"></label>
+        <label>Author <input id="author" type="text" autocomplete="off"></label>
+      </div>
+      <fieldset>
+        <legend>Layout</legend>
+        <label class="radio"><input type="radio" name="mode" value="reflow" checked>
+          <span><b>Reflowable text</b> — best for reading; adapts to any screen and font size.</span></label>
+        <label class="radio"><input type="radio" name="mode" value="fixed">
+          <span><b>Fixed pages (images)</b> — keeps the exact look; works for scanned PDFs, comics and layouts.</span></label>
+      </fieldset>
+      <div class="row">
+        <button id="convertBtn" class="btn primary">Convert to EPUB</button>
+        <button id="resetBtn1" class="btn ghost">Choose another</button>
+      </div>
+    </section>
+
+    <section id="stepProgress" class="card" hidden>
+      <h2>Converting…</h2>
+      <div class="bar"><i id="barFill"></i></div>
+      <p id="status" class="sub">Starting…</p>
+    </section>
+
+    <section id="stepResult" hidden>
+      <div class="card result-head">
+        <div>
+          <h2 id="resultTitle">Your book is ready</h2>
+          <p id="resultInfo" class="sub"></p>
+        </div>
+        <div class="row">
+          <a id="downloadBtn" class="btn primary" download>⬇ Download EPUB</a>
+          <button id="shareBtn" class="btn" hidden>Share</button>
+          <button id="resetBtn2" class="btn ghost">Convert another</button>
+        </div>
+      </div>
+
+      <div id="stage" class="stage">
+        <div id="book" class="book" aria-label="Book preview"></div>
+      </div>
+      <div class="pager">
+        <button id="prevBtn" class="btn round" aria-label="Previous page">‹</button>
+        <span id="pageInfo">–</span>
+        <button id="nextBtn" class="btn round" aria-label="Next page">›</button>
+      </div>
+      <p class="hint">Tap the page edges, swipe, or use ← → keys to turn pages.</p>
+    </section>
+  </main>
+
+  <footer>Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+
+  <script src="lib/jszip.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "id": "./",
+  "name": "PDF to EPUB Book Converter",
+  "short_name": "PDF→EPUB",
+  "description": "Convert PDF files to EPUB books on your device, with a page-turning book preview.",
+  "start_url": "./index.html?source=pwa",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1a1f2e",
+  "theme_color": "#1a1f2e",
+  "categories": ["productivity", "utilities", "books"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "file_handlers": [
+    { "action": "./index.html", "accept": { "application/pdf": [".pdf"] } }
+  ],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "shortcuts": [
+    { "name": "Convert a PDF", "url": "./index.html?source=shortcut", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
