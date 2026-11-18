@@ -118,9 +118,13 @@ async function renderLibrary() {
     const cover = b.cover ? Object.assign(document.createElement('img'), { src: URL.createObjectURL(b.cover), alt: '' }) : Object.assign(document.createElement('div'), { className: 'nocover', textContent: '📖' });
     const meta = document.createElement('div'); meta.className = 'meta';
     const t = document.createElement('b'); t.textContent = b.title;
-    const sm = document.createElement('small'); sm.textContent = `${b.author ? b.author + ' · ' : ''}${fmtSize(b.size)} · ${Math.round((b.progress || 0) * 100)}% read`;
-    const bar = document.createElement('div'); bar.className = 'pbar'; bar.innerHTML = '<i></i>'; bar.firstChild.style.width = Math.round((b.progress || 0) * 100) + '%';
-    meta.append(t, sm, bar);
+    const pct = Math.round((b.progress || 0) * 100);
+    const sm = document.createElement('small'); sm.textContent = `${b.author ? b.author + ' · ' : ''}${fmtSize(b.size)}`;
+    const row = document.createElement('div'); row.className = 'pbarrow';
+    row.innerHTML = '<div class="pbar"><i></i></div><span class="pct"></span>';
+    row.querySelector('i').style.width = pct + '%'; row.querySelector('.pct').textContent = pct + '%';
+    row.title = pct + '% read';
+    meta.append(t, sm, row);
     const acts = document.createElement('div'); acts.className = 'acts';
     const mk = (icon, aria, fn, cls = '') => { const x = document.createElement('button'); x.className = 'btn icon ' + cls; x.innerHTML = `<svg class="ico"><use href="#i-${icon}"/></svg>`; x.setAttribute('aria-label', aria); x.title = aria; x.onclick = (e) => { e.stopPropagation(); fn(); }; return x; };
     acts.append(
@@ -155,7 +159,7 @@ function openReader(data, id, startFrac = 0, from = 'stepPick') {
   reader.classList.add('chrome-hidden'); // immersive by default; tap the middle of the page for controls
   $('rProg').hidden = false;
   readerBook = new Book($('rStage'), $('rBook'), (s) => {
-    $('rInfo').textContent = s.label; $('rPrev').disabled = !s.canPrev; $('rNext').disabled = !s.canNext;
+    $('rInfo').textContent = `${s.label} · ${Math.round((readerBook ? readerBook.progress() : 0) * 100)}%`; $('rPrev').disabled = !s.canPrev; $('rNext').disabled = !s.canNext;
     const p = readerBook ? readerBook.progress() : 0;
     $('rProg').firstChild.style.width = (p * 100).toFixed(1) + '%';
     if (!seeking) $('rSeek').value = Math.round(p * 1000);
