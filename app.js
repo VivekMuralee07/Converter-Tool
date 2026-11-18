@@ -1,25 +1,34 @@
 import { convert } from './converter.js';
 import { Book } from './book.js';
+import { parseEpub } from './reader.js';
+import { bookId, saveBook, getBook, deleteBook, listBooks, setProgress } from './library.js';
 
 const $ = (id) => document.getElementById(id);
-const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult'];
-const show = (id) => steps.forEach((s) => ($(s).hidden = s !== id));
+const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult', 'stepReader'];
+const show = (id) => {
+  steps.forEach((s) => ($(s).hidden = s !== id));
+  $('stepLibrary').hidden = id !== 'stepPick';
+  document.body.classList.toggle('reading', id === 'stepReader');
+  if (id === 'stepPick') renderLibrary();
+};
 
-let file = null, book = null, downloadUrl = null, totalPages = 0;
+let file = null, book = null, downloadUrl = null, totalPages = 0, readerBook = null, lastResult = null, backTo = 'stepPick';
 
 async function pick(f) {
   if (!f) return;
   if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { alert('Please choose a PDF file.'); return; }
   file = f;
   $('fileName').textContent = f.name;
-  $('title').value = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
+  const guess = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
+  $('title').value = guess;
   $('author').value = ''; $('from').value = ''; $('to').value = ''; syncFit();
   show('stepOptions');
   try { // prefill from PDF metadata
     const { openPdf } = await import('./converter.js');
     const { meta, pdf } = await openPdf(f);
-    if (meta.Title && meta.Title.trim()) $('title').value = meta.Title.trim();
-    if (meta.Author) $('author').value = meta.Author.trim();
+    // only fill from the PDF if the user hasn't typed something in the meantime, and this is still the same file
+    if (file === f && meta.Title && meta.Title.trim() && $('title').value === guess) $('title').value = meta.Title.trim();
+    if (file === f && meta.Author && !$('author').value) $('author').value = meta.Author.trim();
     totalPages = pdf.numPages; $('to').placeholder = totalPages; $('rangeHint').textContent = `This PDF has ${totalPages} pages. Tip: for big books convert one chapter at a time — it is faster and the files stay small.`;
     pdf.destroy();
   } catch { /* metadata is optional */ }
@@ -51,6 +60,8 @@ async function run() {
     const shareFile = new File([res.epub], fname + '.epub', { type: 'application/epub+zip' });
     $('shareBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [shareFile] }));
     $('shareBtn').onclick = () => navigator.share({ files: [shareFile], title: opts.title }).catch(() => {});
+    lastResult = res;
+    saveBook({ id: bookId(opts.title, res.epub), title: opts.title, author: opts.author, size: res.epub.size, added: Date.now(), opened: Date.now(), progress: 0, blob: res.epub, cover: res.coverBlob }).catch(() => {});
     show('stepResult');
     book = new Book($('stage'), $('book'), (s) => {
       $('pageInfo').textContent = s.label; $('prevBtn').disabled = !s.canPrev; $('nextBtn').disabled = !s.canNext;
@@ -86,6 +97,71 @@ addEventListener('appinstalled', () => ($('installBtn').hidden = true));
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(console.warn);
 if ('launchQueue' in window) {
   launchQueue.setConsumer(async (params) => {
-    if (params.files && params.files.length) pick(await params.files[0].getFile());
+    if (!params.files || !params.files.length) return;
+    const f = await params.files[0].getFile();
+    if (/\.epub$/i.test(f.name)) openEpubFile(f); else pick(f);
   });
 }
+
+/* ---------- reader & library ---------- */
+const fmtSize = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+
+async function renderLibrary() {
+  const books = await listBooks(), ul = $('bookList');
+  $('libEmpty').hidden = books.length > 0;
+  ul.innerHTML = '';
+  for (const b of books) {
+    const li = document.createElement('li');
+    const cover = b.cover ? Object.assign(document.createElement('img'), { src: URL.createObjectURL(b.cover), alt: '' }) : Object.assign(document.createElement('div'), { className: 'nocover', textContent: '📖' });
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const t = document.createElement('b'); t.textContent = b.title;
+    const sm = document.createElement('small'); sm.textContent = `${b.author ? b.author + ' · ' : ''}${fmtSize(b.size)} · ${Math.round((b.progress || 0) * 100)}% read`;
+    meta.append(t, sm);
+    const del = document.createElement('button'); del.className = 'btn ghost del'; del.textContent = '🗑'; del.setAttribute('aria-label', 'Remove');
+    del.onclick = async (e) => { e.stopPropagation(); if (confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } };
+    li.append(cover, meta, del);
+    li.onclick = () => openSaved(b.id);
+    ul.appendChild(li);
+  }
+}
+
+function openReader(data, id, startFrac = 0, from = 'stepPick') {
+  backTo = from;
+  if (readerBook) { readerBook.destroy(); readerBook = null; }
+  $('rTitle').textContent = data.title;
+  show('stepReader');
+  let t;
+  readerBook = new Book($('rStage'), $('rBook'), (s) => {
+    $('rInfo').textContent = s.label; $('rPrev').disabled = !s.canPrev; $('rNext').disabled = !s.canNext;
+    clearTimeout(t); t = setTimeout(() => id && readerBook && setProgress(id, readerBook.progress()).catch(() => {}), 600);
+  });
+  readerBook.load(data, startFrac);
+}
+
+async function openSaved(id) {
+  const rec = await getBook(id);
+  if (!rec) return;
+  try { openReader(await parseEpub(rec.blob), id, rec.progress || 0); }
+  catch (err) { console.error(err); alert('Could not open this book: ' + (err.message || err)); show('stepPick'); }
+}
+
+async function openEpubFile(f) {
+  try {
+    const data = await parseEpub(f);
+    const id = bookId(data.title, f), old = await getBook(id);
+    await saveBook({ id, title: data.title, author: data.author, size: f.size, added: old?.added || Date.now(), opened: Date.now(), progress: old?.progress || 0, blob: f, cover: data.coverBlob });
+    openReader(data, id, old?.progress || 0);
+  } catch (err) { console.error(err); alert('Could not open this EPUB: ' + (err.message || err)); }
+}
+
+$('epubFile').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openEpubFile(f); });
+$('readBtn').onclick = () => lastResult && openReader(lastResult, bookId(lastResult.title, lastResult.epub), 0, 'stepResult');
+$('rBack').onclick = () => {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  if (readerBook) { readerBook.destroy(); readerBook = null; }
+  show(backTo);
+};
+$('rPrev').onclick = () => readerBook && readerBook.prev();
+$('rNext').onclick = () => readerBook && readerBook.next();
+$('rFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {}));
+renderLibrary();
