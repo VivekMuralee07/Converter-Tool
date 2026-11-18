@@ -40,57 +40,89 @@ async function renderCanvas(page, width) {
   return canvas;
 }
 
-// Bounding box of non-white pixels, as fractions of the canvas (null if blank).
+// Bounding box of the page body as fractions of the canvas (null if blank). A running header/footer
+// (a thin ink band in the top/bottom edge, separated from the body by a gap) is left out.
 function contentBox(canvas) {
   const { width: w, height: h } = canvas;
   const d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
-  let x0 = w, x1 = -1, y0 = h, y1 = -1;
+  const rows = []; // [y, minX, maxX] for rows that contain ink
   for (let y = 0; y < h; y += 2) {
+    let mn = w, mx = -1;
     for (let x = 0; x < w; x += 2) {
       const i = (y * w + x) * 4;
-      if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (d[i] < 235 || d[i + 1] < 235 || d[i + 2] < 235) { if (x < mn) mn = x; mx = x; }
     }
+    if (mx >= 0) rows.push([y, mn, mx]);
   }
-  return x1 < 0 ? null : { x0: x0 / w, x1: (x1 + 2) / w, y0: y0 / h, y1: (y1 + 2) / h };
+  if (!rows.length) return null;
+  const segs = []; // groups of ink rows separated by gaps >= 1.2% of the page height
+  for (const r of rows) {
+    const last = segs[segs.length - 1];
+    if (last && r[0] - last[last.length - 1][0] < h * 0.012) last.push(r); else segs.push([r]);
+  }
+  if (segs.length > 1 && segs[0][0][0] < h * 0.1) segs.shift();
+  if (segs.length > 1 && segs[segs.length - 1][0][0] > h * 0.9) segs.pop();
+  const body = segs.flat();
+  return {
+    x0: Math.min(...body.map((r) => r[1])) / w, x1: (Math.max(...body.map((r) => r[2])) + 2) / w,
+    y0: body[0][0] / h, y1: (body[body.length - 1][0] + 2) / h,
+  };
 }
 
-async function sliceImage(blob, g, box, aspect) {
-  const bmp = await createImageBitmap(blob);
-  const W = bmp.width, H = bmp.height, pad = Math.round(W * 0.015);
-  const cx0 = Math.max(0, Math.floor(g.x0 * W) - pad), cx1 = Math.min(W, Math.ceil(g.x1 * W) + pad);
-  const cy0 = Math.max(0, Math.floor(box.y0 * H) - pad), cy1 = Math.min(H, Math.ceil(box.y1 * H) + pad);
-  const cw = cx1 - cx0, ch = cy1 - cy0;
-  const src = document.createElement('canvas'); src.width = cw; src.height = ch;
-  const sctx = src.getContext('2d', { willReadFrequently: true });
-  sctx.drawImage(bmp, cx0, cy0, cw, ch, 0, 0, cw, ch); bmp.close();
-  const data = sctx.getImageData(0, 0, cw, ch).data;
-  const blank = new Uint8Array(ch); // blank[y] = row is white
-  for (let y = 0; y < ch; y++) {
-    let ok = 1;
-    for (let x = 0; x < cw; x += 3) { const i = (y * cw + x) * 4; if (data[i] < 235 || data[i + 1] < 235 || data[i + 2] < 235) { ok = 0; break; } }
-    blank[y] = ok;
-  }
-  const sliceH = Math.round(cw / aspect);
-  const cuts = [];
-  let y = 0;
-  while (y < ch) {
-    let end = y + sliceH;
-    if (end >= ch) end = ch;
-    else { // prefer cutting on a blank row (between text lines) in the last 25% of the slice
-      for (let t = end; t > end - sliceH * 0.25; t--) if (blank[t]) { end = t; break; }
+// Joins page bodies into one tall strip (all scaled to the same width) and cuts it into screen-shaped
+// slices, preferring blank rows, so every slice fills the reader's screen.
+function makeStripper(aspect, emit) {
+  const Wc = 1000, sliceH = Math.round(Wc / aspect), GAP = 28;
+  let strip = document.createElement('canvas'); strip.width = Wc; strip.height = sliceH * 3;
+  let sctx = strip.getContext('2d', { willReadFrequently: true });
+  sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, Wc, strip.height);
+  let pendH = 0;
+
+  const blankRow = (data, y, bandTop) => { // data from getImageData(0, bandTop, Wc, n)
+    const o = (y - bandTop) * Wc * 4;
+    for (let x = 0; x < Wc; x++) { const i = o + x * 4; if (data[i] < 235 || data[i + 1] < 235 || data[i + 2] < 235) return false; }
+    return true;
+  };
+  async function cut(final) {
+    while (pendH >= sliceH || (final && pendH > 0)) {
+      let end = Math.min(pendH, sliceH);
+      if (pendH > sliceH) {
+        const top = Math.floor(sliceH * 0.72), data = sctx.getImageData(0, top, Wc, sliceH - top).data;
+        for (let t = sliceH; t > top; t--) if (t < pendH && blankRow(data, t - 1, top)) { end = t; break; }
+      }
+      const full = sctx.getImageData(0, 0, Wc, end).data;
+      let ink = false;
+      for (let i = 0; i < full.length; i += 16) if (full[i] < 235) { ink = true; break; }
+      if (ink) {
+        const c = document.createElement('canvas'); c.width = Wc; c.height = end;
+        c.getContext('2d').drawImage(strip, 0, 0, Wc, end, 0, 0, Wc, end);
+        await emit({ blob: await toBlob(c, 0.85), w: Wc, h: end });
+        c.width = c.height = 0;
+      }
+      sctx.drawImage(strip, 0, end, Wc, pendH - end, 0, 0, Wc, pendH - end);
+      sctx.fillStyle = '#fff'; sctx.fillRect(0, pendH - end, Wc, strip.height - (pendH - end));
+      pendH -= end;
+      if (final && pendH <= 0) break;
     }
-    cuts.push([y, end]); y = end;
   }
-  const out = [];
-  for (const [a, b] of cuts) {
-    if (b - a < 8 || blank.subarray(a, b).every((v) => v)) continue;
-    const c = document.createElement('canvas'); c.width = cw; c.height = b - a;
-    c.getContext('2d').drawImage(src, 0, a, cw, b - a, 0, 0, cw, b - a);
-    out.push({ blob: await toBlob(c, 0.85), w: cw, h: b - a });
-    c.width = c.height = 0;
-  }
-  src.width = src.height = 0;
-  return out;
+  return {
+    async addPage(blob, g, box) {
+      const bmp = await createImageBitmap(blob);
+      const W = bmp.width, H = bmp.height, pad = Math.round(W * 0.015);
+      const cx0 = Math.max(0, Math.floor(g.x0 * W) - pad), cx1 = Math.min(W, Math.ceil(g.x1 * W) + pad);
+      const cy0 = Math.max(0, Math.floor(box.y0 * H) - pad), cy1 = Math.min(H, Math.ceil(box.y1 * H) + pad);
+      const dh = Math.round((cy1 - cy0) * Wc / (cx1 - cx0));
+      if (pendH + dh + GAP > strip.height) { // grow the strip
+        const n = document.createElement('canvas'); n.width = Wc; n.height = pendH + dh + GAP + sliceH;
+        const nc = n.getContext('2d', { willReadFrequently: true }); nc.fillStyle = '#fff'; nc.fillRect(0, 0, n.width, n.height);
+        nc.drawImage(strip, 0, 0); strip.width = strip.height = 0; strip = n; sctx = nc;
+      }
+      sctx.drawImage(bmp, cx0, cy0, cx1 - cx0, cy1 - cy0, 0, pendH, Wc, dh); bmp.close();
+      pendH += dh + GAP;
+      await cut(false);
+    },
+    finish: () => cut(true),
+  };
 }
 
 /* ---------- text extraction ---------- */
@@ -250,16 +282,20 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
         if (box) g = g ? { x0: Math.min(g.x0, box.x0), x1: Math.max(g.x1, box.x1) } : { x0: box.x0, x1: box.x1 };
         await sleep0();
       }
-      // pass 2: trim margins and cut into screen-shaped pieces
+      // pass 2: join the page bodies into one strip and cut it into screen-shaped slices
       result.skipFirst = false;
+      let emitted = 0;
+      const starts = [];
+      const strip = makeStripper(aspect, (img) => { emitted++; add(img, `Part ${emitted}`, null); });
       for (let i = 0; i < n; i++) {
         onProgress(0.45 + (i + 1) / n * 0.45, `Fitting page ${i + 1} of ${n} to screen`);
-        if (!pages[i].box) continue;
-        const slices = await sliceImage(pages[i].blob, g, pages[i].box, aspect);
-        slices.forEach((sl, k) => add(sl, `Page ${i + 1}${k ? ` (part ${k + 1})` : ''}`, k ? null : `Page ${i + 1}`));
+        if (pages[i].box && g) { starts.push({ slice: emitted + 1, title: `Page ${i + 1}` }); await strip.addPage(pages[i].blob, g, pages[i].box); }
         pages[i].blob = null;
         await sleep0();
       }
+      await strip.finish();
+      const pad4 = (k) => `p${String(Math.min(k, emitted)).padStart(4, '0')}.xhtml`;
+      starts.forEach((t) => emitted && toc.push({ href: pad4(t.slice), title: t.title }));
     } else {
       result.skipFirst = true;
       for (let i = 1; i <= n; i++) {
