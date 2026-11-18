@@ -38,7 +38,8 @@ async function run() {
   opts.zoom = parseFloat($('zoom').value) || 1.5;
   opts.from = parseInt($('from').value, 10) || 1; opts.to = parseInt($('to').value, 10) || 0;
   const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
-  opts.aspect = Math.max(0.4, Math.min(0.75, sw / (sh * 0.9))); // leave room for the reader's own bars
+  // readers add side margins and top/bottom bars, so the usable area is narrower and shorter than the screen
+  opts.aspect = Math.max(0.3, Math.min(0.75, (sw / sh) * parseFloat($('margins').value)));
   try {
     const res = await convert(file, opts, (p, msg) => { $('barFill').style.width = Math.round(p * 100) + '%'; $('status').textContent = msg; });
     const fname = opts.title.replace(/[\\/:*?"<>|]+/g, '').trim() || 'book';
@@ -68,7 +69,7 @@ const drop = $('drop');
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
-function syncFit() { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; $('zoom').disabled = !$('fit').checked; }
+function syncFit() { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; $('zoom').disabled = $('margins').disabled = !$('fit').checked; }
 $('fit').addEventListener('change', syncFit);
 document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', syncFit));
 $('fit').checked = innerWidth < 820;

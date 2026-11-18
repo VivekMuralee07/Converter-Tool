@@ -52,6 +52,12 @@
             <option value="1.5" selected>Large — splits columns &amp; sidebars, 1.5× text</option>
             <option value="2.2">Extra large — splits columns, 2.2× text</option>
           </select></label>
+        <label class="zoomsel">Reader margins
+          <select id="margins">
+            <option value="1.0">Small — reader uses the full width</option>
+            <option value="0.89" selected>Normal</option>
+            <option value="0.78">Large — reader adds wide margins</option>
+          </select></label>
       </div>
       <div class="grid range">
         <label>From page <input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
@@ -95,7 +101,7 @@
     </section>
   </main>
 
-  <footer>v7 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v8 · Works offline once installed · Reflow mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
