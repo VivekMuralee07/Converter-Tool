@@ -40,7 +40,7 @@ async function run() {
     const a = $('downloadBtn'); a.href = downloadUrl; a.download = fname + '.epub';
     const mb = (res.epub.size / 1048576).toFixed(1);
     $('resultTitle').textContent = `“${opts.title}” is ready`;
-    $('resultInfo').textContent = `${res.pageCount} PDF pages · ${mb} MB` + (res.mode === 'reflow' && !res.hasText ? ' · no text found — try “Fixed pages”' : '');
+    $('resultInfo').textContent = `${res.pageCount} PDF pages · ${mb} MB` + (res.mode === 'reflow' && !res.hasText ? ' · no text found — try “Fixed pages”' : res.messy ? ' · lots of formulas/symbols detected — “Fixed pages” will look better' : '');
     const shareFile = new File([res.epub], fname + '.epub', { type: 'application/epub+zip' });
     $('shareBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [shareFile] }));
     $('shareBtn').onclick = () => navigator.share({ files: [shareFile], title: opts.title }).catch(() => {});
