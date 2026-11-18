@@ -235,7 +235,5 @@ body[data-theme=warm] #stepReader .book { --paper: #f6e3b4; --paper-ink: #3d2e17
 body.reading[data-theme=dark] { background: #04060a; }
 body.reading[data-theme=warm] { background: #1d1610; }
 body[data-theme=dark] #stepReader .imgpage { background: #0f0f0f; }
-body[data-theme=dark] #stepReader .imgpage img { filter: invert(.94) hue-rotate(180deg); }
-body[data-theme=dark] #stepReader .page.cover img { filter: brightness(.85); }
 #warmVeil { position: fixed; inset: 0; z-index: 15; pointer-events: none; background: rgba(255, 166, 40, .24); mix-blend-mode: multiply; opacity: 0; transition: opacity .3s; }
 body[data-theme=warm] #warmVeil { opacity: 1; }
