@@ -38,7 +38,7 @@ async function extractLines(page) {
   const lines = [];
   for (const it of items) {
     const last = lines[lines.length - 1];
-    if (last && Math.abs(last.y - it.y) < Math.max(it.size, last.size) * 0.45) last.items.push(it);
+    if (last && Math.abs(last.y - it.y) < Math.max(it.size, last.size) * 0.7) last.items.push(it);
     else lines.push({ y: it.y, items: [it] });
   }
   return lines.map((l) => {
@@ -93,9 +93,10 @@ function buildBlocks(pagesLines) {
       let startNew = !last || last.t[0] === 'h';
       if (!startNew && prev) {
         const gap = prev.y - l.y;
-        const indent = l.x - left > l.size * 0.8;
-        const shortPrev = prev.right - prev.x < maxW * 0.7 && endsSentence.test(prev.text);
-        startNew = gap > l.size * 1.9 || indent || shortPrev;
+        const frag = l.text.length <= 4 || prev.text.length <= 4; // math symbols, bullets, stray glyphs
+        const indent = !frag && l.x - left > l.size * 0.8;
+        const shortPrev = prev.text.length > 20 && prev.right - prev.x < maxW * 0.7 && endsSentence.test(prev.text);
+        startNew = gap > l.size * (frag ? 3 : 1.9) || indent || shortPrev;
       } else if (!startNew && !prev) {
         // first line on a new page: continue the paragraph unless it clearly starts a new one
         startNew = endsSentence.test(last.text) && (l.x - left > l.size * 0.8 || /^[A-Z“"‘']/.test(l.text) && /[.!?”"]$/.test(last.text));
@@ -182,6 +183,8 @@ export async function convert(file, { title, author, mode }, onProgress = () => 
     const blocks = buildBlocks(stripHeadersFooters(raw));
     result.blocks = blocks;
     result.hasText = blocks.length > 0;
+    const flat = raw.flat();
+    result.messy = flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
     const chapters = chunkChapters(blocks, n, title);
     chapters.forEach((c, i) => {
       const name = `c${String(i + 1).padStart(3, '0')}`;
