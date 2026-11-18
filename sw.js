@@ -1,5 +1,5 @@
 // Offline-first service worker for the app shell. Bump VERSION to refresh caches.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `pdf2epub-${VERSION}`;
 const ASSETS = [
   './', './index.html', './styles.css', './app.js', './converter.js', './book.js',
@@ -19,16 +19,14 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Network-first so updates show up on the next load; the cache is the offline fallback.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => {
-      const net = fetch(req).then((res) => {
-        if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone()));
-        return res;
-      });
-      return hit || net.catch(() => caches.match('./index.html'));
-    })
+    fetch(req).then((res) => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+      return res;
+    }).catch(() => caches.match(req, { ignoreSearch: true }).then((hit) => hit || caches.match('./index.html')))
   );
 });
