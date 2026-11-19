@@ -5,16 +5,19 @@ import { initHub } from './hub.js';
 import { bookId, saveBook, getBook, deleteBook, listBooks, setProgress, renameBook } from './library.js';
 
 const $ = (id) => document.getElementById(id);
-const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult', 'stepReader', 'stepTool'];
+const TABS = ['stepLibrary', 'stepPick', 'stepTools'];
+const steps = [...TABS, 'stepOptions', 'stepProgress', 'stepResult', 'stepReader', 'stepTool'];
 const show = (id) => {
   steps.forEach((s) => ($(s).hidden = s !== id));
-  $('stepLibrary').hidden = $('stepTools').hidden = id !== 'stepPick';
   document.body.classList.toggle('reading', id === 'stepReader');
+  document.body.classList.toggle('has-tabs', TABS.includes(id));
+  document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === id ? 'page' : 'false'));
   if (id !== 'stepReader') delete document.body.dataset.theme;
-  if (id === 'stepPick') renderLibrary();
+  if (id === 'stepLibrary') renderLibrary();
+  if (TABS.includes(id)) scrollTo(0, 0);
 };
 
-let file = null, book = null, downloadUrl = null, totalPages = 0, readerBook = null, lastResult = null, backTo = 'stepPick';
+let file = null, book = null, downloadUrl = null, totalPages = 0, readerBook = null, lastResult = null, backTo = 'stepLibrary';
 
 async function pick(f) {
   if (!f) return;
@@ -111,34 +114,75 @@ if ('launchQueue' in window) {
 /* ---------- reader & library ---------- */
 const fmtSize = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
+let coverUrls = [], libSort = 'recent';
+try { libSort = localStorage.getItem('libSort') || 'recent'; } catch { /* ignore */ }
+const hue = (s) => { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+function coverEl(b) {
+  const box = document.createElement('div'); box.className = 'cover';
+  if (b.cover) { const img = new Image(); img.alt = ''; img.src = URL.createObjectURL(b.cover); coverUrls.push(img.src); box.appendChild(img); }
+  else { const h = hue(b.title); box.innerHTML = '<div class="gen"><b></b><small></small></div>'; box.firstChild.style.background = `linear-gradient(160deg, hsl(${h} 42% 30%), hsl(${(h + 40) % 360} 48% 14%))`; box.querySelector('b').textContent = b.title; box.querySelector('small').textContent = b.author || ''; }
+  return box;
+}
+function progressRow(p) {
+  const pct = Math.round(p * 100), row = document.createElement('div'); row.className = 'pbarrow';
+  row.innerHTML = '<div class="pbar"><i></i></div><span class="pct"></span>';
+  row.querySelector('i').style.width = pct + '%'; row.querySelector('.pct').textContent = pct + '%'; row.title = pct + '% read';
+  return row;
+}
+
 async function renderLibrary() {
-  const books = await listBooks(), ul = $('bookList');
-  $('libEmpty').hidden = books.length > 0;
-  ul.innerHTML = '';
+  coverUrls.forEach(URL.revokeObjectURL); coverUrls = [];
+  const all = await listBooks();
+  const books = libSort === 'title' ? [...all].sort((x, y) => x.title.localeCompare(y.title)) : all; // listBooks() is already most-recent first
+  $('libEmpty').hidden = all.length > 0; $('shelfHead').hidden = !all.length;
+  $('libCount').textContent = all.length ? `${all.length} book${all.length > 1 ? 's' : ''} on this device` : 'Pick up where you left off.';
+  document.querySelectorAll('[data-sort]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.sort === libSort)));
+
+  // "Continue reading": the book opened most recently
+  const cc = $('continueCard'); cc.innerHTML = ''; cc.hidden = !all.length;
+  if (all.length) {
+    const b = all[0], info = document.createElement('div'); info.className = 'cinfo';
+    info.innerHTML = '<span class="eyebrow">Continue reading</span><b class="t"></b><small></small>';
+    info.querySelector('.t').textContent = b.title; info.querySelector('small').textContent = b.author || 'Tap to open';
+    info.appendChild(progressRow(b.progress || 0));
+    const go = document.createElement('button'); go.className = 'btn primary'; go.type = 'button'; go.innerHTML = '<svg class="ico"><use href="#i-book"/></svg>' + ((b.progress || 0) > 0.01 ? 'Continue' : 'Start reading');
+    info.appendChild(go);
+    cc.append(coverEl(b), info); cc.onclick = () => openSaved(b.id);
+  }
+
+  const ul = $('bookList'); ul.innerHTML = '';
   for (const b of books) {
-    const li = document.createElement('li');
-    const cover = b.cover ? Object.assign(document.createElement('img'), { src: URL.createObjectURL(b.cover), alt: '' }) : Object.assign(document.createElement('div'), { className: 'nocover', textContent: '📖' });
-    const meta = document.createElement('div'); meta.className = 'meta';
-    const t = document.createElement('b'); t.textContent = b.title;
-    const pct = Math.round((b.progress || 0) * 100);
-    const sm = document.createElement('small'); sm.textContent = `${b.author ? b.author + ' · ' : ''}${fmtSize(b.size)}`;
-    const row = document.createElement('div'); row.className = 'pbarrow';
-    row.innerHTML = '<div class="pbar"><i></i></div><span class="pct"></span>';
-    row.querySelector('i').style.width = pct + '%'; row.querySelector('.pct').textContent = pct + '%';
-    row.title = pct + '% read';
-    meta.append(t, sm, row);
-    const acts = document.createElement('div'); acts.className = 'acts';
-    const mk = (icon, aria, fn, cls = '') => { const x = document.createElement('button'); x.className = 'btn icon ' + cls; x.innerHTML = `<svg class="ico"><use href="#i-${icon}"/></svg>`; x.setAttribute('aria-label', aria); x.title = aria; x.onclick = (e) => { e.stopPropagation(); fn(); }; return x; };
-    acts.append(
-      mk('edit', 'Rename', async () => { const n = (prompt('New name for this book:', b.title) || '').trim(); if (n && n !== b.title) { await renameBook(b.id, n); renderLibrary(); } }),
-      mk('download', 'Download EPUB', () => downloadBlob(b.blob, b.title)),
-      mk('trash', 'Remove', async () => { if (confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } }, 'danger'),
-    );
-    li.append(cover, meta, acts);
+    const li = document.createElement('li'); li.className = 'book'; li.tabIndex = 0; li.setAttribute('role', 'button'); li.setAttribute('aria-label', `Open ${b.title}`);
+    const cover = coverEl(b), p = b.progress || 0;
+    const more = document.createElement('button'); more.type = 'button'; more.className = 'more'; more.setAttribute('aria-label', 'Book options'); more.innerHTML = '<svg class="ico"><use href="#i-dots"/></svg>';
+    more.onclick = (e) => { e.stopPropagation(); openBookSheet(b); };
+    cover.appendChild(more);
+    if (p >= 0.97) cover.insertAdjacentHTML('beforeend', '<span class="badge done">Finished</span>'); else if (p === 0) cover.insertAdjacentHTML('beforeend', '<span class="badge">New</span>');
+    const meta = document.createElement('div'); meta.className = 'bmeta';
+    meta.innerHTML = '<b></b><small></small>'; meta.querySelector('b').textContent = b.title; meta.querySelector('small').textContent = b.author || fmtSize(b.size);
+    meta.appendChild(progressRow(p));
+    li.append(cover, meta);
     li.onclick = () => openSaved(b.id);
+    li.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSaved(b.id); } };
     ul.appendChild(li);
   }
 }
+
+// bottom sheet with the less common book actions
+let sheetBook = null;
+function openBookSheet(b) {
+  sheetBook = b;
+  $('bsTitle').textContent = b.title; $('bsMeta').textContent = `${b.author ? b.author + ' · ' : ''}${fmtSize(b.size)} · ${Math.round((b.progress || 0) * 100)}% read`;
+  const c = $('bsCover'); c.innerHTML = ''; if (b.cover) { const img = new Image(); img.alt = ''; img.src = URL.createObjectURL(b.cover); coverUrls.push(img.src); c.appendChild(img); }
+  $('bookSheet').hidden = false;
+}
+const closeBookSheet = () => { $('bookSheet').hidden = true; sheetBook = null; };
+$('bookSheetBg').onclick = closeBookSheet;
+$('bsOpen').onclick = () => { const b = sheetBook; closeBookSheet(); b && openSaved(b.id); };
+$('bsRename').onclick = async () => { const b = sheetBook; closeBookSheet(); if (!b) return; const n = (prompt('New name for this book:', b.title) || '').trim(); if (n && n !== b.title) { await renameBook(b.id, n); renderLibrary(); } };
+$('bsDownload').onclick = () => { const b = sheetBook; closeBookSheet(); b && downloadBlob(b.blob, b.title); };
+$('bsRemove').onclick = async () => { const b = sheetBook; closeBookSheet(); if (b && confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } };
+document.querySelectorAll('[data-sort]').forEach((x) => (x.onclick = () => { libSort = x.dataset.sort; try { localStorage.setItem('libSort', libSort); } catch { /* ignore */ } renderLibrary(); }));
 
 const safeName = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '').trim() || 'book';
 function downloadBlob(blob, name) {
@@ -174,7 +218,7 @@ function syncFontUi() {
 function applyFont() { prefs.set('readerFontSize', fontSize); prefs.set('readerFont', fontKey); syncFontUi(); readerBook && readerBook.setFont({ size: fontSize, family: FONTS[fontKey] }); }
 const sheet = (on) => { $('rSheet').hidden = !on; if (!on) $('rTocList').hidden = true; };
 
-function openReader(data, id, startFrac = 0, from = 'stepPick') {
+function openReader(data, id, startFrac = 0, from = 'stepLibrary') {
   backTo = from; readerId = id;
   if (readerBook) { readerBook.destroy(); readerBook = null; }
   $('rTitle').textContent = data.title;
@@ -204,7 +248,7 @@ async function openSaved(id) {
   if (!rec) return;
   busy(true, 'Opening book…');
   try { openReader(await parseEpub(rec.blob), id, rec.progress || 0); }
-  catch (err) { console.error(err); alert('Could not open this book: ' + (err.message || err)); show('stepPick'); }
+  catch (err) { console.error(err); alert('Could not open this book: ' + (err.message || err)); show('stepLibrary'); }
   finally { busy(false); }
 }
 
@@ -246,6 +290,9 @@ $('rToc').onclick = () => {
   ul.hidden = false; ul.scrollIntoView({ block: 'nearest' });
 };
 $('rFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {}));
-renderLibrary();
-
+document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => show(t.dataset.tab)));
+document.querySelectorAll('[data-go]').forEach((x) => (x.onclick = () => show(x.dataset.go)));
+$('libBtn').onclick = () => show('stepLibrary');
 initHub({ show });
+// start on the Library when there are books, otherwise on Convert
+listBooks().then((b) => show(b.length ? 'stepLibrary' : 'stepPick')).catch(() => show('stepPick'));
