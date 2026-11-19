@@ -31,6 +31,7 @@
     <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
     <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.5L6 21z"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18a4 4 0 010-8 5 5 0 019.6-1.4A4.5 4.5 0 0117 18"/><path d="M12 12v7m0 0l-3-3m3 3l3-3"/></symbol>
     <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
   </svg>
 
@@ -81,6 +82,34 @@
       </div>
       <p id="noMatch" class="muted center" hidden>No books match.</p>
       <ul id="bookList" class="shelf"></ul>
+    </section>
+
+    <!-- ============ Get books tab ============ -->
+    <section id="stepGet" class="tabpage" hidden>
+      <div class="page-head">
+        <div>
+          <h1 class="page-title">Get books</h1>
+          <p class="muted">Free, legal books from Project Gutenberg and the Internet Archive.</p>
+        </div>
+      </div>
+      <form id="gForm" class="gform" role="search">
+        <input id="gQuery" class="search" type="search" placeholder="Search title or author" autocomplete="off" aria-label="Search books">
+        <button class="btn primary" type="submit">Search</button>
+      </form>
+      <div class="gfilters">
+        <div id="gSources" class="seg small" role="group" aria-label="Source">
+          <button class="segb" data-src="all" aria-pressed="true" type="button">All</button>
+          <button class="segb" data-src="pg" aria-pressed="false" type="button">Gutenberg</button>
+          <button class="segb" data-src="ia" aria-pressed="false" type="button">Internet Archive</button>
+        </div>
+        <select id="gLang" aria-label="Language (Project Gutenberg)"></select>
+      </div>
+      <div id="gErr" class="alert" role="alert" hidden></div>
+      <ul id="gList" class="glist"></ul>
+      <div id="gSpin" class="center" hidden><div class="spin"></div></div>
+      <p id="gEmpty" class="muted center" hidden>No books found. Try different words.</p>
+      <div class="center"><button id="gMore" class="btn secondary" type="button" hidden>Show more</button></div>
+      <p class="muted small-note center">Books come from Project Gutenberg and the Internet Archive. Copyright rules differ by country, so check each book's page before relying on it. Files you download stay on this device.</p>
     </section>
 
     <!-- ============ Convert tab ============ -->
@@ -387,6 +416,7 @@
 
   <nav id="tabbar" class="tabbar" aria-label="Main">
     <button class="tab" data-tab="stepLibrary" type="button"><svg class="ico"><use href="#i-library"/></svg><span>Library</span></button>
+    <button class="tab" data-tab="stepGet" type="button"><svg class="ico"><use href="#i-cloud"/></svg><span>Get books</span></button>
     <button class="tab" data-tab="stepPick" type="button"><svg class="ico"><use href="#i-convert"/></svg><span>Convert</span></button>
     <button class="tab" data-tab="stepTools" type="button"><svg class="ico"><use href="#i-tools"/></svg><span>Tools</span></button>
   </nav>
@@ -446,7 +476,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <footer>v27</footer>
+  <footer>v28</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>

@@ -2,10 +2,11 @@ import { convert, OCR_LANGS } from './converter.js';
 import { Book } from './book.js';
 import { parseEpub, parseAny, kindOf } from './reader.js';
 import { initHub } from './hub.js';
+import { initGet } from './getbooks.js';
 import { bookId, saveBook, getBook, getBlob, deleteBook, listBooks, setProgress, renameBook, updateBook, exportBackup, importBackup } from './library.js';
 
 const $ = (id) => document.getElementById(id);
-const TABS = ['stepLibrary', 'stepPick', 'stepTools'];
+const TABS = ['stepLibrary', 'stepGet', 'stepPick', 'stepTools'];
 const steps = [...TABS, 'stepOptions', 'stepProgress', 'stepResult', 'stepReader', 'stepTool'];
 const show = (id) => {
   steps.forEach((s) => ($(s).hidden = s !== id));
@@ -14,6 +15,7 @@ const show = (id) => {
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === id ? 'page' : 'false'));
   if (id !== 'stepReader') delete document.body.dataset.theme;
   if (id === 'stepLibrary') renderLibrary();
+  if (id === 'stepGet' && window.__get) window.__get.enter();
   if (TABS.includes(id)) scrollTo(0, 0);
 };
 
@@ -538,6 +540,7 @@ document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => show(t.datas
 document.querySelectorAll('[data-go]').forEach((x) => (x.onclick = () => show(x.dataset.go)));
 $('libBtn').onclick = () => show('stepLibrary');
 initHub({ show });
+window.__get = initGet({ toast, openBook: (id) => openSaved(id), openPdf: (f) => pick(f), onAdded: () => {} });
 // start on the Library when there are books, otherwise on Convert
 listBooks().then((b) => show(b.length ? 'stepLibrary' : 'stepPick')).catch(() => show('stepPick'));
 
