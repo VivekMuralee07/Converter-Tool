@@ -23,9 +23,10 @@ export async function sourceToDoc(file) {
     html = t.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
   }
   const doc = new DOMParser().parseFromString(html, 'text/html');
+  const pageTitle = (doc.title || '').trim(); // read before <head> is removed
   doc.querySelectorAll('script,style,iframe,object,embed,noscript,head').forEach((n) => n.remove());
   const h = doc.querySelector('h1');
-  return { body: doc.body, title: (doc.title || (h && h.textContent) || '').trim() };
+  return { body: doc.body, title: (pageTitle || (h && h.textContent) || '').trim() };
 }
 
 /* ---------- DOM -> blocks ---------- */

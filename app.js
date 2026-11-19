@@ -1,8 +1,8 @@
 import { convert } from './converter.js';
 import { Book } from './book.js';
-import { parseEpub } from './reader.js';
+import { parseEpub, parseAny, kindOf } from './reader.js';
 import { initHub } from './hub.js';
-import { bookId, saveBook, getBook, deleteBook, listBooks, setProgress, renameBook } from './library.js';
+import { bookId, saveBook, getBook, getBlob, deleteBook, listBooks, setProgress, renameBook, updateBook, exportBackup, importBackup } from './library.js';
 
 const $ = (id) => document.getElementById(id);
 const TABS = ['stepLibrary', 'stepPick', 'stepTools'];
@@ -69,7 +69,7 @@ async function run() {
     $('fname').oninput = () => { $('downloadBtn').download = safeName($('fname').value) + '.epub'; };
     $('fname').onchange = async () => { const n = $('fname').value.trim(); if (n) { await renameBook(res.id, n).catch(() => {}); $('resultTitle').textContent = `“${n}” is ready`; } };
     lastResult = res; res.id = bookId(opts.title, res.epub);
-    saveBook({ id: res.id, title: opts.title, author: opts.author, size: res.epub.size, added: Date.now(), opened: Date.now(), progress: 0, blob: res.epub, cover: res.coverBlob }).catch(() => {});
+    saveBook({ id: res.id, kind: 'epub', title: opts.title, author: opts.author, size: res.epub.size, added: Date.now(), opened: Date.now(), progress: 0, blob: res.epub, cover: res.coverBlob }).catch(() => {});
     show('stepResult');
     book = new Book($('stage'), $('book'), (s) => {
       $('pageInfo').textContent = s.label; $('prevBtn').disabled = !s.canPrev; $('nextBtn').disabled = !s.canNext;
@@ -107,16 +107,18 @@ if ('launchQueue' in window) {
   launchQueue.setConsumer(async (params) => {
     if (!params.files || !params.files.length) return;
     const f = await params.files[0].getFile();
-    if (/\.epub$/i.test(f.name)) openEpubFile(f); else pick(f);
+    if (/\.pdf$/i.test(f.name)) pick(f); else addBooks([f]);
   });
 }
 
 /* ---------- reader & library ---------- */
 const fmtSize = (n) => (n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
-let coverUrls = [], libSort = 'recent';
-try { libSort = localStorage.getItem('libSort') || 'recent'; } catch { /* ignore */ }
+const pref = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
+let coverUrls = [], libSort = pref('libSort', 'recent'), libFilter = 'All', libQuery = '';
 const hue = (s) => { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+function toast(msg, ms = 3200) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), ms); }
 function coverEl(b) {
   const box = document.createElement('div'); box.className = 'cover';
   if (b.cover) { const img = new Image(); img.alt = ''; img.src = URL.createObjectURL(b.cover); coverUrls.push(img.src); box.appendChild(img); }
@@ -129,18 +131,34 @@ function progressRow(p) {
   row.querySelector('i').style.width = pct + '%'; row.querySelector('.pct').textContent = pct + '%'; row.title = pct + '% read';
   return row;
 }
+const KIND_LABEL = { cbz: 'Comic', txt: 'Text', md: 'Markdown', docx: 'Word', html: 'HTML' };
 
 async function renderLibrary() {
   coverUrls.forEach(URL.revokeObjectURL); coverUrls = [];
   const all = await listBooks();
-  const books = libSort === 'title' ? [...all].sort((x, y) => x.title.localeCompare(y.title)) : all; // listBooks() is already most-recent first
-  $('libEmpty').hidden = all.length > 0; $('shelfHead').hidden = !all.length;
+  const cols = [...new Set(all.map((b) => b.collection).filter(Boolean))].sort((x, y) => x.localeCompare(y));
+  if (libFilter !== 'All' && !cols.includes(libFilter)) libFilter = 'All';
+  const q = libQuery.trim().toLowerCase();
+  let books = all.filter((b) => (libFilter === 'All' || b.collection === libFilter) && (!q || `${b.title} ${b.author || ''}`.toLowerCase().includes(q)));
+  if (libSort === 'title') books.sort((x, y) => x.title.localeCompare(y.title));
+  else if (libSort === 'progress') books.sort((x, y) => (y.progress || 0) - (x.progress || 0));
+  $('libEmpty').hidden = all.length > 0; $('shelfHead').hidden = !all.length; $('libTools').hidden = !all.length;
   $('libCount').textContent = all.length ? `${all.length} book${all.length > 1 ? 's' : ''} on this device` : 'Pick up where you left off.';
+  $('shelfTitle').textContent = libFilter === 'All' ? (q ? 'Results' : 'All books') : libFilter;
+  $('noMatch').hidden = !all.length || books.length > 0;
   document.querySelectorAll('[data-sort]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.sort === libSort)));
+  $('colList').innerHTML = cols.map((c) => `<option value="${c.replace(/"/g, '&quot;')}">`).join('');
 
-  // "Continue reading": the book opened most recently
-  const cc = $('continueCard'); cc.innerHTML = ''; cc.hidden = !all.length;
-  if (all.length) {
+  // collection chips
+  const chips = $('chips'); chips.innerHTML = '';
+  if (cols.length) for (const c of ['All', ...cols]) {
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'cchip'; x.textContent = c === 'All' ? `All (${all.length})` : `${c} (${all.filter((b) => b.collection === c).length})`;
+    x.setAttribute('aria-pressed', String(c === libFilter)); x.onclick = () => { libFilter = c; renderLibrary(); }; chips.appendChild(x);
+  }
+
+  // "Continue reading": the book opened most recently (hidden while searching / filtering)
+  const cc = $('continueCard'); cc.innerHTML = ''; cc.hidden = !all.length || libFilter !== 'All' || !!q;
+  if (!cc.hidden) {
     const b = all[0], info = document.createElement('div'); info.className = 'cinfo';
     info.innerHTML = '<span class="eyebrow">Continue reading</span><b class="t"></b><small></small>';
     info.querySelector('.t').textContent = b.title; info.querySelector('small').textContent = b.author || 'Tap to open';
@@ -158,6 +176,7 @@ async function renderLibrary() {
     more.onclick = (e) => { e.stopPropagation(); openBookSheet(b); };
     cover.appendChild(more);
     if (p >= 0.97) cover.insertAdjacentHTML('beforeend', '<span class="badge done">Finished</span>'); else if (p === 0) cover.insertAdjacentHTML('beforeend', '<span class="badge">New</span>');
+    if (KIND_LABEL[b.kind]) { const k = document.createElement('span'); k.className = 'kind'; k.textContent = KIND_LABEL[b.kind]; cover.appendChild(k); }
     const meta = document.createElement('div'); meta.className = 'bmeta';
     meta.innerHTML = '<b></b><small></small>'; meta.querySelector('b').textContent = b.title; meta.querySelector('small').textContent = b.author || fmtSize(b.size);
     meta.appendChild(progressRow(p));
@@ -167,8 +186,10 @@ async function renderLibrary() {
     ul.appendChild(li);
   }
 }
+$('libSearch').addEventListener('input', (e) => { libQuery = e.target.value; renderLibrary(); });
+document.querySelectorAll('[data-sort]').forEach((x) => (x.onclick = () => { libSort = x.dataset.sort; setPref('libSort', libSort); renderLibrary(); }));
 
-// bottom sheet with the less common book actions
+/* ----- book options, edit details, library menu (bottom sheets) ----- */
 let sheetBook = null;
 function openBookSheet(b) {
   sheetBook = b;
@@ -179,14 +200,57 @@ function openBookSheet(b) {
 const closeBookSheet = () => { $('bookSheet').hidden = true; sheetBook = null; };
 $('bookSheetBg').onclick = closeBookSheet;
 $('bsOpen').onclick = () => { const b = sheetBook; closeBookSheet(); b && openSaved(b.id); };
-$('bsRename').onclick = async () => { const b = sheetBook; closeBookSheet(); if (!b) return; const n = (prompt('New name for this book:', b.title) || '').trim(); if (n && n !== b.title) { await renameBook(b.id, n); renderLibrary(); } };
-$('bsDownload').onclick = () => { const b = sheetBook; closeBookSheet(); b && downloadBlob(b.blob, b.title); };
+$('bsDownload').onclick = async () => { const b = sheetBook; closeBookSheet(); if (!b) return; const blob = await getBlob(b.id); blob ? downloadBlob(blob, b.title, b.kind || 'epub') : toast('The file for this book is missing.'); };
 $('bsRemove').onclick = async () => { const b = sheetBook; closeBookSheet(); if (b && confirm(`Remove “${b.title}” from this device?`)) { await deleteBook(b.id); renderLibrary(); } };
-document.querySelectorAll('[data-sort]').forEach((x) => (x.onclick = () => { libSort = x.dataset.sort; try { localStorage.setItem('libSort', libSort); } catch { /* ignore */ } renderLibrary(); }));
+
+let editBook = null, editCover;   // editCover: undefined = unchanged, null = removed, Blob = new
+function showEditCover() {
+  const c = $('edCover'); c.innerHTML = '';
+  const blob = editCover === undefined ? editBook.cover : editCover;
+  if (blob) { const img = new Image(); img.alt = ''; img.src = URL.createObjectURL(blob); coverUrls.push(img.src); c.appendChild(img); }
+}
+$('bsEdit').onclick = () => {
+  const b = sheetBook; closeBookSheet(); if (!b) return;
+  editBook = b; editCover = undefined; $('edTitle').value = b.title; $('edAuthor').value = b.author || ''; $('edCollection').value = b.collection || '';
+  showEditCover(); $('editSheet').hidden = false;
+};
+const closeEdit = () => { $('editSheet').hidden = true; editBook = null; };
+$('editBg').onclick = closeEdit; $('edCancel').onclick = closeEdit;
+$('edCoverClear').onclick = () => { editCover = null; showEditCover(); };
+$('edCoverFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try { // shrink to a sensible cover size
+    const bmp = await createImageBitmap(f), s = Math.min(1, 640 / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
+    editCover = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88)); showEditCover();
+  } catch { toast('That file is not an image this phone can read.'); }
+});
+$('edSave').onclick = async () => {
+  const b = editBook; if (!b) return;
+  const patch = { title: $('edTitle').value.trim() || b.title, author: $('edAuthor').value.trim(), collection: $('edCollection').value.trim() };
+  if (editCover !== undefined) patch.cover = editCover;
+  closeEdit(); await updateBook(b.id, patch); renderLibrary(); toast('Saved');
+};
+
+$('libMenu').onclick = async () => { const bs = await listBooks(); $('libStats').textContent = `${bs.length} book${bs.length === 1 ? '' : 's'} on this device`; $('libSheet').hidden = false; };
+$('libSheetBg').onclick = () => ($('libSheet').hidden = true);
+$('lsBackup').onclick = async () => {
+  $('libSheet').hidden = true; busy(true, 'Preparing backup…');
+  try {
+    const blob = await exportBackup((p, msg) => ($('busyText').textContent = msg));
+    const u = URL.createObjectURL(blob), a = Object.assign(document.createElement('a'), { href: u, download: `ebook-library-backup-${new Date().toISOString().slice(0, 10)}.zip` });
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 15000); toast('Backup saved to your downloads');
+  } catch (err) { console.error(err); alert('Backup failed: ' + (err.message || err)); } finally { busy(false); }
+};
+$('restoreFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return; $('libSheet').hidden = true; busy(true, 'Restoring…');
+  try { const r = await importBackup(f, (p, msg) => ($('busyText').textContent = msg)); await renderLibrary(); toast(`Restored ${r.added} new book${r.added === 1 ? '' : 's'}${r.merged ? `, updated ${r.merged}` : ''}`); }
+  catch (err) { console.error(err); alert(err.message || String(err)); } finally { busy(false); }
+});
 
 const safeName = (s) => (s || '').replace(/[\\/:*?"<>|]+/g, '').trim() || 'book';
-function downloadBlob(blob, name) {
-  const u = URL.createObjectURL(blob), el = Object.assign(document.createElement('a'), { href: u, download: safeName(name) + '.epub' });
+function downloadBlob(blob, name, ext = 'epub') {
+  const u = URL.createObjectURL(blob), el = Object.assign(document.createElement('a'), { href: u, download: safeName(name) + '.' + ext });
   document.body.appendChild(el); el.click(); el.remove(); setTimeout(() => URL.revokeObjectURL(u), 10000);
 }
 const busy = (on, text = 'Opening…') => { $('busy').hidden = !on; $('busyText').textContent = text; };
@@ -213,7 +277,7 @@ const prefs = {
 let fontSize = 19, fontKey = 'serif';
 function syncFontUi() {
   $('rFontVal').textContent = fontSize;
-  document.querySelectorAll('.segb').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.font === fontKey)));
+  document.querySelectorAll('#rSheet .segb').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.font === fontKey)));
 }
 function applyFont() { prefs.set('readerFontSize', fontSize); prefs.set('readerFont', fontKey); syncFontUi(); readerBook && readerBook.setFont({ size: fontSize, family: FONTS[fontKey] }); }
 const sheet = (on) => { $('rSheet').hidden = !on; if (!on) $('rTocList').hidden = true; };
@@ -247,23 +311,36 @@ async function openSaved(id) {
   const rec = await getBook(id);
   if (!rec) return;
   busy(true, 'Opening book…');
-  try { openReader(await parseEpub(rec.blob), id, rec.progress || 0); }
-  catch (err) { console.error(err); alert('Could not open this book: ' + (err.message || err)); show('stepLibrary'); }
-  finally { busy(false); }
-}
-
-async function openEpubFile(f) {
-  busy(true, 'Opening book…');
   try {
-    const data = await parseEpub(f);
-    const id = bookId(data.title, f), old = await getBook(id);
-    await saveBook({ id, title: old?.title || data.title, author: data.author, size: f.size, added: old?.added || Date.now(), opened: Date.now(), progress: old?.progress || 0, blob: f, cover: data.coverBlob });
-    openReader({ ...data, title: old?.title || data.title }, id, old?.progress || 0);
-  } catch (err) { console.error(err); alert('Could not open this EPUB: ' + (err.message || err)); }
+    const blob = await getBlob(id); if (!blob) throw new Error('The file for this book is missing. Remove it and add it again.');
+    openReader(await parseAny(blob, rec.kind || 'epub', rec.title), id, rec.progress || 0);
+  } catch (err) { console.error(err); alert('Could not open this book: ' + (err.message || err)); show('stepLibrary'); }
   finally { busy(false); }
 }
 
-$('epubFile').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openEpubFile(f); e.target.value = ''; });
+// Add one or many books (EPUB, CBZ, Word, Markdown, HTML, text). A single book opens straight away.
+async function addBooks(list) {
+  const files = [...list], added = [], problems = [];
+  busy(true, 'Adding books…');
+  try {
+    for (const [i, f] of files.entries()) {
+      $('busyText').textContent = files.length > 1 ? `Adding ${i + 1} of ${files.length}…` : 'Opening book…';
+      const kind = kindOf(f.name) || (/epub/.test(f.type) ? 'epub' : null);
+      if (!kind) { problems.push(`${f.name}: unsupported file type`); continue; }
+      try {
+        const data = await parseAny(f, kind, f.name), id = bookId(data.title, f), old = await getBook(id);
+        await saveBook({ id, title: old?.title || data.title, author: old ? old.author : data.author, kind, size: f.size, added: old?.added || Date.now(), opened: Date.now(), progress: old?.progress || 0, collection: old?.collection || '', bookmarks: old?.bookmarks || [], highlights: old?.highlights || [], cover: old?.cover || data.coverBlob || data.libCover || null, blob: f });
+        added.push({ id, data: { ...data, title: old?.title || data.title }, progress: old?.progress || 0 });
+      } catch (err) { console.error(err); problems.push(`${f.name}: ${err.message || err}`); }
+    }
+  } finally { busy(false); }
+  if (added.length === 1 && !problems.length) return openReader(added[0].data, added[0].id, added[0].progress);
+  show('stepLibrary');
+  if (added.length) toast(`Added ${added.length} book${added.length > 1 ? 's' : ''}` + (problems.length ? ` · ${problems.length} skipped` : ''));
+  if (problems.length) alert('Some files could not be added:\n\n' + problems.join('\n'));
+}
+
+$('epubFile').addEventListener('change', async (e) => { const fs = [...e.target.files]; e.target.value = ''; if (fs.length) await addBooks(fs); });
 $('readBtn').onclick = () => lastResult && openReader({ ...lastResult, title: $('fname').value.trim() || lastResult.title }, lastResult.id, 0, 'stepResult');
 $('rBack').onclick = () => {
   savePos(); sheet(false);
@@ -275,7 +352,7 @@ $('rMenu').onclick = () => sheet(true);
 $('rSheetBg').onclick = () => sheet(false);
 $('rFontDown').onclick = () => { fontSize = Math.max(13, fontSize - 1); applyFont(); };
 $('rFontUp').onclick = () => { fontSize = Math.min(32, fontSize + 1); applyFont(); };
-document.querySelectorAll('.segb').forEach((b) => (b.onclick = () => { fontKey = b.dataset.font; applyFont(); }));
+document.querySelectorAll('#rSheet .segb').forEach((b) => (b.onclick = () => { fontKey = b.dataset.font; applyFont(); }));
 $('rSeek').addEventListener('input', () => { seeking = true; $('rPct').textContent = Math.round($('rSeek').value / 10) + '%'; });
 $('rSeek').addEventListener('change', () => { seeking = false; readerBook && readerBook.goTo($('rSeek').value / 1000); });
 $('rToc').onclick = () => {

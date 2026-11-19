@@ -379,3 +379,22 @@ body.has-tabs main { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 92p
 .bs-cover { flex: none; width: 44px; height: 62px; border-radius: 4px 7px 7px 4px; overflow: hidden; background: #26304a; box-shadow: 0 6px 12px #0006; } .bs-cover img { width: 100%; height: 100%; object-fit: cover; }
 .bs-act { appearance: none; width: 100%; display: flex; align-items: center; gap: 14px; padding: 15px 6px; border: 0; border-bottom: 1px solid var(--sheet-line); background: transparent; color: var(--sheet-ink); font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
 .bs-act:last-child { border-bottom: 0; } .bs-act:active { background: var(--chrome-bg); } .bs-act.danger { color: #ff7b7b; }
+
+/* ---- library tools: search, collections, menus, toast ---- */
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.btn.icon.big { width: 46px; min-height: 46px; border: 1px solid var(--line); background: #ffffff12; color: var(--ink); } .btn.icon.big .ico { fill: currentColor; stroke: none; }
+.search { width: 100%; min-height: 46px; padding: 0 16px 0 44px; border-radius: 14px; border: 1px solid var(--line); background: #0000003d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%23a2abc2' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 14px center; color: var(--ink); font: inherit; margin-bottom: 12px; }
+.search::-webkit-search-cancel-button { filter: invert(.7); }
+.collections { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 14px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.collections::-webkit-scrollbar { display: none; }
+.cchip { flex: none; appearance: none; border: 1px solid var(--line); background: #ffffff0d; color: var(--muted); font: inherit; font-size: .86rem; font-weight: 650; padding: 7px 14px; border-radius: 99px; cursor: pointer; white-space: nowrap; }
+.cchip[aria-pressed=true] { background: var(--gold); color: #2a1604; border-color: transparent; }
+.cover .kind { position: absolute; right: 6px; bottom: 6px; z-index: 2; padding: 2px 7px; border-radius: 6px; font-size: .62rem; font-weight: 800; letter-spacing: .05em; background: #000b; color: #fff; text-transform: uppercase; }
+.small-note { font-size: .8rem; padding: 12px 6px 4px; margin: 0; }
+.sheet.app label.bs-act { cursor: pointer; }
+.edit-top { display: flex; align-items: center; gap: 16px; margin: 4px 0 16px; }
+.bs-cover.big { width: 72px; height: 104px; } .edit-cover-btns { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.sheet.app .field { margin-bottom: 14px; } .sheet.app .field input { background: #0000003d; color: var(--sheet-ink); }
+.sheet.app .actions.row { margin-top: 6px; }
+.toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 96px); transform: translateX(-50%); z-index: 90; max-width: min(92vw, 460px); background: #11172a; color: #fff; border: 1px solid var(--line); padding: 11px 18px; border-radius: 14px; box-shadow: 0 10px 30px #0008; font-size: .92rem; text-align: center; animation: fadein .2s; }
+body.reading .toast { bottom: 24px; }

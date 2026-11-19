@@ -29,6 +29,7 @@
     <symbol id="i-convert" viewBox="0 0 24 24"><path d="M5 8h13l-3.5-3.5M19 16H6l3.5 3.5"/></symbol>
     <symbol id="i-tools" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></symbol>
     <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
     <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
   </svg>
 
@@ -48,13 +49,16 @@
           <h1 class="page-title">Library</h1>
           <p id="libCount" class="muted">Pick up where you left off.</p>
         </div>
-        <label class="btn secondary"><svg class="ico"><use href="#i-folder"/></svg>Open EPUB<input id="epubFile" type="file" accept=".epub,application/epub+zip,application/octet-stream,application/zip" hidden></label>
+        <div class="head-actions">
+          <label class="btn secondary"><svg class="ico"><use href="#i-plus"/></svg>Add books<input id="epubFile" type="file" multiple accept=".epub,.cbz,.txt,.md,.markdown,.docx,.html,.htm,application/epub+zip,application/octet-stream,application/zip" hidden></label>
+          <button id="libMenu" class="btn icon big" type="button" aria-label="Library menu"><svg class="ico"><use href="#i-dots"/></svg></button>
+        </div>
       </div>
 
       <div id="libEmpty" class="empty big">
         <div class="empty-ico">📚</div>
         <b>Your library is empty</b>
-        <span>Books you convert or open are kept here on this device, with your reading progress, so you can read them again &mdash; even offline.</span>
+        <span>Add EPUB, comic (CBZ), Word, Markdown, HTML or text files, or convert a PDF. Books are kept on this device with your reading progress, so you can read them again &mdash; even offline.</span>
         <div class="empty-actions">
           <button class="btn primary" type="button" data-go="stepPick"><svg class="ico"><use href="#i-wand"/></svg>Convert a PDF</button>
         </div>
@@ -62,13 +66,19 @@
 
       <div id="continueCard" class="continue" hidden></div>
 
+      <div id="libTools" hidden>
+        <input id="libSearch" class="search" type="search" placeholder="Search title or author" autocomplete="off" aria-label="Search your books">
+        <div id="chips" class="collections" role="group" aria-label="Collections"></div>
+      </div>
       <div id="shelfHead" class="shelf-head" hidden>
-        <h2>All books</h2>
+        <h2 id="shelfTitle">All books</h2>
         <div class="seg small" role="group" aria-label="Sort books">
           <button class="segb" data-sort="recent" aria-pressed="true" type="button">Recent</button>
           <button class="segb" data-sort="title" aria-pressed="false" type="button">A–Z</button>
+          <button class="segb" data-sort="progress" aria-pressed="false" type="button">Progress</button>
         </div>
       </div>
+      <p id="noMatch" class="muted center" hidden>No books match.</p>
       <ul id="bookList" class="shelf"></ul>
     </section>
 
@@ -303,13 +313,45 @@
       <div class="sheet-grab"></div>
       <div class="bs-head"><span id="bsCover" class="bs-cover"></span><div><b id="bsTitle"></b><small id="bsMeta"></small></div></div>
       <button id="bsOpen" class="bs-act" type="button"><svg class="ico"><use href="#i-book"/></svg>Open</button>
-      <button id="bsRename" class="bs-act" type="button"><svg class="ico"><use href="#i-edit"/></svg>Rename</button>
-      <button id="bsDownload" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Download EPUB</button>
+      <button id="bsEdit" class="bs-act" type="button"><svg class="ico"><use href="#i-edit"/></svg>Edit details, cover &amp; collection</button>
+      <button id="bsDownload" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Download file</button>
       <button id="bsRemove" class="bs-act danger" type="button"><svg class="ico"><use href="#i-trash"/></svg>Remove from this device</button>
     </div>
   </div>
 
-  <footer>v24</footer>
+  <div id="editSheet" class="sheet app" hidden>
+    <div id="editBg" class="sheet-bg"></div>
+    <div class="sheet-card" role="dialog" aria-label="Edit book details">
+      <div class="sheet-grab"></div>
+      <div class="edit-top">
+        <span id="edCover" class="bs-cover big"></span>
+        <div class="edit-cover-btns">
+          <label class="btn secondary">Choose cover<input id="edCoverFile" type="file" accept="image/*" hidden></label>
+          <button id="edCoverClear" class="btn text" type="button">Remove cover</button>
+        </div>
+      </div>
+      <label class="field"><span>Title</span><input id="edTitle" type="text" autocomplete="off"></label>
+      <label class="field"><span>Author</span><input id="edAuthor" type="text" autocomplete="off"></label>
+      <label class="field"><span>Collection (shelf)</span><input id="edCollection" type="text" list="colList" autocomplete="off" placeholder="e.g. Novels, Study, To read"></label>
+      <datalist id="colList"></datalist>
+      <div class="actions row"><button id="edSave" class="btn primary lg" type="button">Save</button><button id="edCancel" class="btn text lg" type="button">Cancel</button></div>
+    </div>
+  </div>
+
+  <div id="libSheet" class="sheet app" hidden>
+    <div id="libSheetBg" class="sheet-bg"></div>
+    <div class="sheet-card" role="dialog" aria-label="Library menu">
+      <div class="sheet-grab"></div>
+      <div class="bs-head"><div><b>Library</b><small id="libStats"></small></div></div>
+      <button id="lsBackup" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Back up library (ZIP)</button>
+      <label class="bs-act"><svg class="ico"><use href="#i-upload"/></svg>Restore from backup<input id="restoreFile" type="file" accept=".zip,application/zip" hidden></label>
+      <p class="muted small-note">Books live only on this device. Back them up before clearing browser data or changing phone.</p>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <footer>v25</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
