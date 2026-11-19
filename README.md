@@ -70,3 +70,10 @@ Not supported without a server: pixel-perfect Office → PDF, PDF → editable W
 ## Limitations
 Reflow mode doesn’t OCR scanned PDFs and handles multi-column layouts/tables/images only approximately;
 use Fixed pages for those. Bump `VERSION` in `sw.js` when you change files so installed apps refresh.
+
+## Built-in dictionary
+Select a single word while reading and its meaning appears on screen (tap **Full entry** for every sense, examples and similar words; **Define** also works on short phrases; 🔊 says the word aloud).
+- Data: **Princeton WordNet** (permissive licence, see `dict/WORDNET-LICENSE.txt`), about 147,000 words, converted by `scripts/build-dict.py` into small files named by the first two letters (`dict/ru.json`). Only the file for the word you look up is fetched, then cached by the service worker. **Reader settings → Save dictionary for offline use** downloads all of them (about 8 MB).
+- Word forms (running, children, happier, went …) are traced back to the base word by `dictionary.js`.
+- This is not the Oxford English Dictionary (that is commercial); each entry links to Oxford Learner's Dictionaries online.
+- Rebuild: `python3 -I scripts/build-dict.py <wordnet/dict folder> dict/` (the folder from the npm package `wordnet-db`).

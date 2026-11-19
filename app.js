@@ -2,11 +2,11 @@ import { convert, OCR_LANGS } from './converter.js';
 import { Book } from './book.js';
 import { parseEpub, parseAny, kindOf } from './reader.js';
 import { initHub } from './hub.js';
-import { initGet } from './getbooks.js';
+import { lookup, POS_NAME, saveForOffline } from './dictionary.js';
 import { bookId, saveBook, getBook, getBlob, deleteBook, listBooks, setProgress, renameBook, updateBook, exportBackup, importBackup } from './library.js';
 
 const $ = (id) => document.getElementById(id);
-const TABS = ['stepLibrary', 'stepGet', 'stepPick', 'stepTools'];
+const TABS = ['stepLibrary', 'stepPick', 'stepTools'];
 const steps = [...TABS, 'stepOptions', 'stepProgress', 'stepResult', 'stepReader', 'stepTool'];
 const show = (id) => {
   steps.forEach((s) => ($(s).hidden = s !== id));
@@ -15,7 +15,6 @@ const show = (id) => {
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-current', t.dataset.tab === id ? 'page' : 'false'));
   if (id !== 'stepReader') delete document.body.dataset.theme;
   if (id === 'stepLibrary') renderLibrary();
-  if (id === 'stepGet' && window.__get) window.__get.enter();
   if (TABS.includes(id)) scrollTo(0, 0);
 };
 
@@ -299,6 +298,7 @@ const FONTS = {
 };
 const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
 const fmtMin = (m) => (m < 1 ? 'under a minute' : m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`);
+let dictAuto = pref('dictAuto', 'on') !== 'off';
 let fontSize = 19, fontKey = 'serif', lineH = 1.55, padX = 26, turn = 'curl', bright = 100;
 let annot = { bookmarks: [], highlights: [] }, hitPage;
 
@@ -309,6 +309,8 @@ function syncSettingsUi() {
   document.querySelectorAll('#rSheet [data-px]').forEach((b) => b.setAttribute('aria-pressed', String(+b.dataset.px === padX)));
   document.querySelectorAll('#rSheet [data-turn]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.turn === turn)));
   $('rBright').value = bright; $('rBrightVal').textContent = bright + '%';
+  document.querySelectorAll('#rSheet [data-dict]').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.dict === 'on') === dictAuto)));
+  $('dictState').textContent = pref('dictOffline', '') ? 'ready offline ✓' : '';
 }
 function applyLayout() {
   setPref('readerFontSize', fontSize); setPref('readerFont', fontKey); setPref('readerLH', lineH); setPref('readerPadX', padX);
@@ -459,9 +461,73 @@ $('ttsStop').onclick = ttsStop;
 $('ttsPause').onclick = () => { if (!ttsOk) return; if (speechSynthesis.paused) { speechSynthesis.resume(); $('ttsPause').textContent = 'Pause'; } else { speechSynthesis.pause(); $('ttsPause').textContent = 'Resume'; } };
 $('ttsRate').onclick = () => { const r = [0.8, 1, 1.25, 1.5, 1.8]; tts.rate = r[(r.indexOf(tts.rate) + 1) % r.length] || 1; setPref('ttsRate', tts.rate); $('ttsRate').textContent = tts.rate + '×'; speakPage(); };
 
+
+/* ----- dictionary: select a word to see its meaning ----- */
+const WORD = /^[\p{L}][\p{L}'’-]{1,29}$/u;
+const selectedText = () => (window.getSelection ? getSelection().toString().replace(/\s+/g, ' ').trim() : '');
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+let dictTimer, dictWord = null, dsToken = 0;
+function speakWord(w) { if (!ttsOk) return toast('No voice available on this device.', 1800); speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(w); u.lang = 'en-US'; u.rate = 0.9; speechSynthesis.speak(u); }
+const hideDictCard = () => { $('dictCard').hidden = true; dictWord = null; };
+for (const ev of ['pointerdown', 'mousedown', 'touchstart']) $('dictCard').addEventListener(ev, (e) => e.preventDefault()); // keep the selection alive while tapping the card
+
+async function showDictCard(word) {
+  dictWord = word;
+  let res; try { res = await lookup(word); } catch (e) { res = { error: e.message }; }
+  if (dictWord !== word || !$('rSheet').hidden) return; // selection changed while loading
+  $('dcWord').textContent = word;
+  if (res && res.error) { $('dcPos').textContent = ''; $('dcDef').textContent = res.error; }
+  else if (!res) { $('dcPos').textContent = ''; $('dcDef').textContent = 'No entry for this word in the offline dictionary. Tap “Full entry” to look it up online.'; }
+  else {
+    const s = res.senses[0], form = res.lemma !== word.toLowerCase();
+    $('dcPos').textContent = `${form ? `form of “${res.lemma}” · ` : ''}${POS_NAME[s[0]]}`; $('dcDef').textContent = cap(s[1]) + (res.senses.length > 1 ? ` (+${res.senses.length - 1} more)` : '');
+  }
+  $('dictCard').hidden = false; $('dcMore').onclick = () => openDictSheet(word); $('dcSpeak').onclick = () => speakWord(word);
+}
+$('dcClose').onclick = () => { hideDictCard(); getSelection().removeAllRanges(); $('selBar').hidden = true; };
+
+async function openDictSheet(word) {
+  const my = ++dsToken; hideDictCard(); $('selBar').hidden = true;
+  $('dsWord').textContent = word; $('dsLemma').textContent = ''; $('dsBody').innerHTML = '<p class="ds-note">Looking up…</p>';
+  $('dsOxford').href = `https://www.oxfordlearnersdictionaries.com/search/english/?q=${encodeURIComponent(word)}`; $('dsWeb').href = `https://www.google.com/search?q=define+${encodeURIComponent(word)}`;
+  $('dsSpeak').onclick = () => speakWord(word); $('dictSheet').hidden = false;
+  let res; try { res = await lookup(word); } catch (e) { if (my === dsToken) $('dsBody').innerHTML = `<p class="ds-note"></p>`, $('dsBody').firstChild.textContent = e.message; return; }
+  if (my !== dsToken) return;
+  const body = $('dsBody'); body.innerHTML = '';
+  if (!res) { body.innerHTML = '<p class="ds-note"></p>'; body.firstChild.textContent = `There is no entry for “${word}” in the offline dictionary. Use the links below to look it up online.`; return; }
+  if (res.lemma !== word.toLowerCase()) $('dsLemma').textContent = `form of “${res.lemma}”`;
+  for (const pos of [...new Set(res.senses.map((s) => s[0]))]) { // most common part of speech first
+    const group = res.senses.filter((s) => s[0] === pos);
+    const h4 = document.createElement('h4'); h4.textContent = POS_NAME[pos]; const ol = document.createElement('ol');
+    for (const [, def, ex, syn] of group) {
+      const li = document.createElement('li'); li.append(document.createTextNode(cap(def)));
+      for (const e of ex.slice(0, 1)) { const em = document.createElement('em'); em.textContent = `“${cap(e)}”`; li.appendChild(em); }
+      if (syn.length) { const row = document.createElement('div'); row.className = 'ds-chips'; row.innerHTML = '<span>Similar:</span>'; syn.forEach((w) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ds-chip'; b.textContent = w; b.onclick = () => openDictSheet(w); row.appendChild(b); }); li.appendChild(row); }
+      ol.appendChild(li);
+    }
+    body.append(h4, ol);
+  }
+  if (res.related && res.related.length) { const row = document.createElement('div'); row.className = 'ds-chips'; row.innerHTML = '<span>Also see:</span>'; res.related.forEach((w) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'ds-chip'; b.textContent = w; b.onclick = () => openDictSheet(w); row.appendChild(b); }); body.appendChild(row); }
+}
+$('dictBg').onclick = () => { dsToken++; $('dictSheet').hidden = true; };
+$('selDefine').onclick = () => { const t = selectedText(); if (t) openDictSheet(t.length > 60 ? t.slice(0, 60) : t); };
+document.querySelectorAll('#rSheet [data-dict]').forEach((b) => (b.onclick = () => { dictAuto = b.dataset.dict === 'on'; setPref('dictAuto', dictAuto ? 'on' : 'off'); if (!dictAuto) hideDictCard(); syncSettingsUi(); }));
+$('dictOffline').onclick = async () => {
+  const btn = $('dictOffline'), label = btn.textContent; btn.disabled = true;
+  try { await saveForOffline((p) => (btn.textContent = `Saving… ${Math.round(p * 100)}%`)); setPref('dictOffline', '1'); toast('Dictionary saved for offline use', 2500); }
+  catch (e) { toast(e.message, 4500); } finally { btn.disabled = false; btn.textContent = label; syncSettingsUi(); }
+};
+// a word was selected -> show its meaning after a short pause (so dragging the selection handles does not flicker)
+document.addEventListener('selectionchange', () => {
+  if (!readerBook || $('stepReader').hidden) return;
+  clearTimeout(dictTimer); const t = selectedText();
+  if (!t || !WORD.test(t) || !dictAuto || !$('rSheet').hidden || !$('dictSheet').hidden) { if (!$('dictSheet').hidden) return; hideDictCard(); return; }
+  dictTimer = setTimeout(() => showDictCard(t), 300);
+});
+
 /* ----- opening a book in the reader ----- */
 async function openReader(data, id, startFrac = 0, from = 'stepLibrary') {
-  backTo = from; readerId = id; ttsStop();
+  backTo = from; readerId = id; ttsStop(); hideDictCard(); $('dictSheet').hidden = true;
   if (readerBook) { readerBook.destroy(); readerBook = null; }
   const rec = id ? await getBook(id).catch(() => null) : null;
   annot = { bookmarks: rec?.bookmarks || [], highlights: rec?.highlights || [] }; hitPage = undefined;
@@ -540,7 +606,6 @@ document.querySelectorAll('.tab').forEach((t) => (t.onclick = () => show(t.datas
 document.querySelectorAll('[data-go]').forEach((x) => (x.onclick = () => show(x.dataset.go)));
 $('libBtn').onclick = () => show('stepLibrary');
 initHub({ show });
-window.__get = initGet({ toast, openBook: (id) => openSaved(id), openPdf: (f) => pick(f), onAdded: () => {} });
 // start on the Library when there are books, otherwise on Convert
 listBooks().then((b) => show(b.length ? 'stepLibrary' : 'stepPick')).catch(() => show('stepPick'));
 

@@ -1,8 +1,8 @@
 // Offline-first service worker for the app shell. Bump VERSION to refresh caches.
-const VERSION = 'v29';
+const VERSION = 'v30';
 const CACHE = `pdf2epub-${VERSION}`;
 const ASSETS = [
-  './', './index.html', './styles.css', './app.js', './converter.js', './book.js', './reader.js', './library.js', './hub.js', './getbooks.js', './tools.js', './pdfdoc.js', './epubbuild.js', './loader.js',
+  './', './index.html', './styles.css', './app.js', './converter.js', './book.js', './reader.js', './library.js', './hub.js', './dictionary.js', './tools.js', './pdfdoc.js', './epubbuild.js', './loader.js',
   './manifest.webmanifest',
   './lib/pdf.min.mjs', './lib/pdf.worker.min.mjs', './lib/jszip.min.js', './lib/pdf-lib.min.js', './lib/mammoth.browser.min.js', './lib/marked.min.js', './lib/xlsx.mini.min.js',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'
