@@ -1,13 +1,14 @@
 import { convert } from './converter.js';
 import { Book } from './book.js';
 import { parseEpub } from './reader.js';
+import { initHub } from './hub.js';
 import { bookId, saveBook, getBook, deleteBook, listBooks, setProgress, renameBook } from './library.js';
 
 const $ = (id) => document.getElementById(id);
-const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult', 'stepReader'];
+const steps = ['stepPick', 'stepOptions', 'stepProgress', 'stepResult', 'stepReader', 'stepTool'];
 const show = (id) => {
   steps.forEach((s) => ($(s).hidden = s !== id));
-  $('stepLibrary').hidden = id !== 'stepPick';
+  $('stepLibrary').hidden = $('stepTools').hidden = id !== 'stepPick';
   document.body.classList.toggle('reading', id === 'stepReader');
   if (id !== 'stepReader') delete document.body.dataset.theme;
   if (id === 'stepPick') renderLibrary();
@@ -217,3 +218,5 @@ $('rSeek').addEventListener('input', () => { seeking = true; });
 $('rSeek').addEventListener('change', () => { seeking = false; readerBook && readerBook.goTo($('rSeek').value / 1000); });
 $('rFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {}));
 renderLibrary();
+
+initHub({ show });
