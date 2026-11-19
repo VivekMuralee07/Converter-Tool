@@ -306,3 +306,11 @@ body.reading .book.spread::before { display: none; }
 .toclist li { padding: 12px 4px; border-bottom: 1px solid var(--sheet-line); cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
 .toclist li.h2 { padding-left: 22px; font-size: .92rem; } .toclist li small { color: var(--paper-sub); flex: none; }
 .toclist li:active { background: var(--chrome-bg); }
+
+/* quick theme switch in the reader's top bar */
+.r-top .themes.quick { pointer-events: auto; gap: 10px; flex: none; margin-right: 6px; }
+.r-top .tbtn { width: 28px; height: 28px; border: 2px solid var(--paper-sub); }
+.r-top .tbtn[aria-pressed=true] { border-color: #0a84ff; box-shadow: 0 0 0 3px #0a84ff55; }
+.r-top .tbtn[data-theme=light] { background: #ffffff; } .r-top .tbtn[data-theme=dark] { background: #000; } .r-top .tbtn[data-theme=warm] { background: #f2cf80; }
+.r-top .r-btn { margin-left: 0; }
+#stepReader.chrome-hidden .themes.quick { pointer-events: none; }
