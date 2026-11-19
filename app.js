@@ -161,26 +161,41 @@ function setTheme(t) {
 }
 document.querySelectorAll('.tbtn').forEach((b) => (b.onclick = () => setTheme(b.dataset.theme)));
 
+const FONTS = { serif: 'Iowan Old Style, "New York", "Noto Serif", Georgia, "Times New Roman", serif', sans: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif' };
+const prefs = {
+  get: (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+};
+let fontSize = 19, fontKey = 'serif';
+function syncFontUi() {
+  $('rFontVal').textContent = fontSize;
+  document.querySelectorAll('.segb').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.font === fontKey)));
+}
+function applyFont() { prefs.set('readerFontSize', fontSize); prefs.set('readerFont', fontKey); syncFontUi(); readerBook && readerBook.setFont({ size: fontSize, family: FONTS[fontKey] }); }
+const sheet = (on) => { $('rSheet').hidden = !on; if (!on) $('rTocList').hidden = true; };
+
 function openReader(data, id, startFrac = 0, from = 'stepPick') {
   backTo = from; readerId = id;
   if (readerBook) { readerBook.destroy(); readerBook = null; }
   $('rTitle').textContent = data.title;
   show('stepReader');
-  let saved = 'light'; try { saved = localStorage.getItem('readerTheme') || 'light'; } catch { /* ignore */ }
-  setTheme(saved);
+  setTheme(prefs.get('readerTheme', 'light'));
+  fontSize = Math.max(13, Math.min(32, parseInt(prefs.get('readerFontSize', '19'), 10) || 19)); fontKey = FONTS[prefs.get('readerFont', 'serif')] ? prefs.get('readerFont', 'serif') : 'serif';
+  syncFontUi(); sheet(false);
   const reader = $('stepReader');
-  reader.classList.add('chrome-hidden'); // immersive by default; tap the middle of the page for controls
-  $('rProg').hidden = false;
+  reader.classList.remove('chrome-hidden');
+  $('rProg').hidden = true;
+  const isText = !data.pageImages && !data.lazyImages;
+  $('rTextRows').hidden = $('rFontRow').hidden = !isText; // text size / font only apply to reflowable books
   readerBook = new Book($('rStage'), $('rBook'), (s) => {
-    $('rInfo').textContent = `${s.label} · ${Math.round((readerBook ? readerBook.progress() : 0) * 100)}%`; $('rPrev').disabled = !s.canPrev; $('rNext').disabled = !s.canNext;
     const p = readerBook ? readerBook.progress() : 0;
-    $('rProg').firstChild.style.width = (p * 100).toFixed(1) + '%';
+    $('rInfo').textContent = s.label;
+    $('rPct').textContent = Math.round(p * 100) + '%';
     if (!seeking) $('rSeek').value = Math.round(p * 1000);
+    $('rToc').hidden = !(readerBook && readerBook.toc && readerBook.toc.length);
     savePos(); // saved on every page change, so the next open resumes here
-  }, { margin: 6, onCenterTap: () => reader.classList.toggle('chrome-hidden') });
-  const hint = Object.assign(document.createElement('div'), { className: 'read-hint', textContent: startFrac > 0 ? `Resumed where you left off (${Math.round(startFrac * 100)}%)` : 'Tap the middle of the page for controls' });
-  document.body.appendChild(hint);
-  setTimeout(() => (hint.style.opacity = 0), 2500); setTimeout(() => hint.remove(), 3200);
+  }, { fullBleed: true, fontSize, fontFamily: FONTS[fontKey], onCenterTap: () => reader.classList.toggle('chrome-hidden') });
+  if (startFrac > 0) { const hint = Object.assign(document.createElement('div'), { className: 'read-hint', textContent: `Resumed where you left off (${Math.round(startFrac * 100)}%)` }); document.body.appendChild(hint); setTimeout(() => (hint.style.opacity = 0), 2200); setTimeout(() => hint.remove(), 2900); }
   readerBook.load(data, startFrac);
 }
 
@@ -207,15 +222,29 @@ async function openEpubFile(f) {
 $('epubFile').addEventListener('change', async (e) => { const f = e.target.files[0]; if (f) await openEpubFile(f); e.target.value = ''; });
 $('readBtn').onclick = () => lastResult && openReader({ ...lastResult, title: $('fname').value.trim() || lastResult.title }, lastResult.id, 0, 'stepResult');
 $('rBack').onclick = () => {
-  savePos(); $('rProg').hidden = true;
+  savePos(); sheet(false);
   if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
   if (readerBook) { readerBook.destroy(); readerBook = null; }
   show(backTo);
 };
-$('rPrev').onclick = () => readerBook && readerBook.prev();
-$('rNext').onclick = () => readerBook && readerBook.next();
-$('rSeek').addEventListener('input', () => { seeking = true; });
+$('rMenu').onclick = () => sheet(true);
+$('rSheetBg').onclick = () => sheet(false);
+$('rFontDown').onclick = () => { fontSize = Math.max(13, fontSize - 1); applyFont(); };
+$('rFontUp').onclick = () => { fontSize = Math.min(32, fontSize + 1); applyFont(); };
+document.querySelectorAll('.segb').forEach((b) => (b.onclick = () => { fontKey = b.dataset.font; applyFont(); }));
+$('rSeek').addEventListener('input', () => { seeking = true; $('rPct').textContent = Math.round($('rSeek').value / 10) + '%'; });
 $('rSeek').addEventListener('change', () => { seeking = false; readerBook && readerBook.goTo($('rSeek').value / 1000); });
+$('rToc').onclick = () => {
+  const ul = $('rTocList'); if (!ul.hidden) { ul.hidden = true; return; }
+  ul.innerHTML = '';
+  for (const t of (readerBook && readerBook.toc) || []) {
+    const li = document.createElement('li'); li.className = t.level === 2 ? 'h2' : ''; li.innerHTML = '<span></span><small></small>';
+    li.firstChild.textContent = t.title; li.lastChild.textContent = Math.max(1, t.page + 1 - (readerBook.hasCover ? 1 : 0));
+    li.onclick = () => { readerBook.goToPage(t.page); sheet(false); };
+    ul.appendChild(li);
+  }
+  ul.hidden = false; ul.scrollIntoView({ block: 'nearest' });
+};
 $('rFull').onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {}));
 renderLibrary();
 
