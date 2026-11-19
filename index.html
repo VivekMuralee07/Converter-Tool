@@ -29,6 +29,8 @@
     <symbol id="i-convert" viewBox="0 0 24 24"><path d="M5 8h13l-3.5-3.5M19 16H6l3.5 3.5"/></symbol>
     <symbol id="i-tools" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></symbol>
     <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.5L6 21z"/></symbol>
     <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
   </svg>
 
@@ -48,13 +50,16 @@
           <h1 class="page-title">Library</h1>
           <p id="libCount" class="muted">Pick up where you left off.</p>
         </div>
-        <label class="btn secondary"><svg class="ico"><use href="#i-folder"/></svg>Open EPUB<input id="epubFile" type="file" accept=".epub,application/epub+zip,application/octet-stream,application/zip" hidden></label>
+        <div class="head-actions">
+          <label class="btn secondary"><svg class="ico"><use href="#i-plus"/></svg>Add books<input id="epubFile" type="file" multiple accept=".epub,.cbz,.txt,.md,.markdown,.docx,.html,.htm,application/epub+zip,application/octet-stream,application/zip" hidden></label>
+          <button id="libMenu" class="btn icon big" type="button" aria-label="Library menu"><svg class="ico"><use href="#i-dots"/></svg></button>
+        </div>
       </div>
 
       <div id="libEmpty" class="empty big">
         <div class="empty-ico">📚</div>
         <b>Your library is empty</b>
-        <span>Books you convert or open are kept here on this device, with your reading progress, so you can read them again &mdash; even offline.</span>
+        <span>Add EPUB, comic (CBZ), Word, Markdown, HTML or text files, or convert a PDF. Books are kept on this device with your reading progress, so you can read them again &mdash; even offline.</span>
         <div class="empty-actions">
           <button class="btn primary" type="button" data-go="stepPick"><svg class="ico"><use href="#i-wand"/></svg>Convert a PDF</button>
         </div>
@@ -62,13 +67,19 @@
 
       <div id="continueCard" class="continue" hidden></div>
 
+      <div id="libTools" hidden>
+        <input id="libSearch" class="search" type="search" placeholder="Search title or author" autocomplete="off" aria-label="Search your books">
+        <div id="chips" class="collections" role="group" aria-label="Collections"></div>
+      </div>
       <div id="shelfHead" class="shelf-head" hidden>
-        <h2>All books</h2>
+        <h2 id="shelfTitle">All books</h2>
         <div class="seg small" role="group" aria-label="Sort books">
           <button class="segb" data-sort="recent" aria-pressed="true" type="button">Recent</button>
           <button class="segb" data-sort="title" aria-pressed="false" type="button">A–Z</button>
+          <button class="segb" data-sort="progress" aria-pressed="false" type="button">Progress</button>
         </div>
       </div>
+      <p id="noMatch" class="muted center" hidden>No books match.</p>
       <ul id="bookList" class="shelf"></ul>
     </section>
 
@@ -162,6 +173,23 @@
         </label>
       </fieldset>
 
+      <div id="scanHint" class="notice" hidden>🔍 <span>This PDF looks <b>scanned</b> (no text found), so OCR has been switched on below.</span></div>
+
+      <div id="reflowRow" class="fitbox">
+        <label class="switch">
+          <span class="switch-text"><b>Keep formulas and tables as pictures</b><small>Display equations and tables stay exactly as in the PDF, inside your resizable text.</small></span>
+          <input type="checkbox" id="keepMath" checked><span class="track"></span>
+        </label>
+        <label class="switch" style="margin-top:14px">
+          <span class="switch-text"><b>Scanned book: read the text (OCR)</b><small>Turns page pictures into real, resizable text. Takes a few seconds per page.</small></span>
+          <input type="checkbox" id="ocr"><span class="track"></span>
+        </label>
+        <div id="ocrLangBox" hidden>
+          <label class="field" style="margin-top:12px"><span>Language of the book</span><select id="ocrLang"></select></label>
+          <p class="hint-line" id="ocrLangNote" style="margin:6px 0 0"></p>
+        </div>
+      </div>
+
       <div id="fitRow" class="fitbox" hidden>
         <label class="switch">
           <span class="switch-text"><b>Fit to this screen</b><small>Trims margins and cuts pages to your screen shape. Recommended on phones.</small></span>
@@ -186,10 +214,12 @@
         <label class="field"><span>From page</span><input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
         <label class="field"><span>To page</span><input id="to" type="number" min="1" inputmode="numeric" placeholder="all"></label>
       </div>
+      <button id="pickPages" class="btn secondary block" type="button" style="margin-bottom:10px">Choose pages from thumbnails</button>
       <p id="rangeHint" class="hint-line">Tip: for big books convert one chapter at a time &mdash; it is faster and the files stay small.</p>
 
       <div class="actions">
         <button id="convertBtn" class="btn primary lg block"><svg class="ico"><use href="#i-wand"/></svg>Convert to EPUB</button>
+        <button id="previewBtn" class="btn secondary block" type="button">Preview first 10 pages</button>
         <button id="resetBtn1" class="btn text block">Choose another file</button>
       </div>
     </section>
@@ -200,10 +230,15 @@
       <h2>Converting your book…</h2>
       <div class="bar"><i id="barFill"></i></div>
       <p id="status" class="muted">Starting…</p>
+      <p class="hint-line">Keep this screen open until it finishes. Your phone is kept awake while converting.</p>
     </section>
 
     <!-- ============ Result ============ -->
     <section id="stepResult" hidden>
+      <div id="previewBanner" class="notice big" hidden>
+        <div>👀 <b>Preview</b> — only <span id="pvRange"></span> were converted, so you can check the layout.</div>
+        <div class="actions row"><button id="pvFull" class="btn primary" type="button">Convert the whole book</button><button id="pvBack" class="btn text" type="button">Change settings</button></div>
+      </div>
       <div class="panel result-head">
         <div class="done">
           <span class="done-ico"><svg class="ico big"><use href="#i-check"/></svg></span>
@@ -238,10 +273,12 @@
     <div id="rProg" class="rprog" hidden><i></i></div>
     <section id="stepReader" hidden>
       <div id="warmVeil" aria-hidden="true"></div>
+      <div id="dimVeil" aria-hidden="true"></div>
       <div id="rStage" class="stage reader"><div id="rBook" class="book" aria-label="Book"></div></div>
 
       <div class="r-top">
         <span id="rTitle" class="r-title"></span>
+        <button id="rMark" class="r-btn flat" aria-label="Bookmark this page" aria-pressed="false"><svg class="ico"><use href="#i-bookmark"/></svg></button>
         <div class="themes quick" role="group" aria-label="Reading theme">
           <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
           <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
@@ -254,38 +291,95 @@
         <button id="rMenu" class="r-btn" aria-label="Reading settings"><svg class="ico"><use href="#i-menu"/></svg></button>
       </div>
 
+      <div id="selBar" class="selbar" hidden>
+        <button class="hlc" data-c="y" aria-label="Highlight yellow"></button><button class="hlc" data-c="g" aria-label="Highlight green"></button><button class="hlc" data-c="b" aria-label="Highlight blue"></button><button class="hlc" data-c="p" aria-label="Highlight pink"></button>
+        <button id="selNote" class="selb" type="button">Note</button><button id="selCopy" class="selb" type="button">Copy</button>
+      </div>
+
+      <div id="ttsBar" class="ttsbar" hidden>
+        <span class="tts-label">🔊 Reading aloud</span>
+        <button id="ttsPause" class="selb" type="button">Pause</button>
+        <button id="ttsRate" class="selb" type="button">1×</button>
+        <button id="ttsStop" class="selb" type="button">Stop</button>
+      </div>
+
       <div id="rSheet" class="sheet" hidden>
         <div id="rSheetBg" class="sheet-bg"></div>
         <div class="sheet-card" role="dialog" aria-label="Reading settings">
           <div class="sheet-grab"></div>
-          <div class="srow"><span class="slabel">Theme</span>
-            <div class="themes" role="group" aria-label="Reading theme">
-              <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
-              <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
-              <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
+
+          <div data-panel="main">
+            <div class="srow"><span class="slabel">Theme</span>
+              <div class="themes" role="group" aria-label="Reading theme">
+                <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
+                <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
+                <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm" aria-pressed="false"></button>
+              </div>
+            </div>
+            <div class="srow col"><span class="slabel">Brightness <b id="rBrightVal"></b></span><input id="rBright" type="range" min="25" max="100" value="100" aria-label="Brightness"></div>
+            <div class="srow txt" id="rTextRows"><span class="slabel">Text size</span>
+              <div class="stepper">
+                <button id="rFontDown" class="sbtn" aria-label="Smaller text"><span style="font-size:.85rem">A</span></button>
+                <b id="rFontVal">19</b>
+                <button id="rFontUp" class="sbtn" aria-label="Larger text"><span style="font-size:1.35rem">A</span></button>
+              </div>
+            </div>
+            <div class="srow txt" id="rFontRow"><span class="slabel">Font</span>
+              <select id="rFontSel" aria-label="Font">
+                <option value="serif">Serif</option><option value="palatino">Palatino</option><option value="sans">Sans-serif</option><option value="easy">Easy to read</option><option value="mono">Typewriter</option>
+              </select>
+            </div>
+            <div class="srow txt"><span class="slabel">Line spacing</span>
+              <div class="seg" role="group" aria-label="Line spacing"><button class="segb" data-lh="1.35" type="button">Tight</button><button class="segb" data-lh="1.55" type="button">Normal</button><button class="segb" data-lh="1.85" type="button">Roomy</button></div>
+            </div>
+            <div class="srow txt"><span class="slabel">Margins</span>
+              <div class="seg" role="group" aria-label="Margins"><button class="segb" data-px="12" type="button">Narrow</button><button class="segb" data-px="26" type="button">Normal</button><button class="segb" data-px="44" type="button">Wide</button></div>
+            </div>
+            <div class="srow"><span class="slabel">Page turn</span>
+              <div class="seg" role="group" aria-label="Page turn"><button class="segb" data-turn="curl" type="button">Curl</button><button class="segb" data-turn="slide" type="button">Slide</button><button class="segb" data-turn="none" type="button">None</button></div>
+            </div>
+            <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
+              <input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position">
+              <small id="rTimeLeft" class="timeleft"></small>
+            </div>
+            <div class="agrid">
+              <button id="rToc" class="btn secondary" type="button">Contents</button>
+              <button id="rSearchBtn" class="btn secondary txt" type="button">Search</button>
+              <button id="rMarksBtn" class="btn secondary" type="button">Bookmarks &amp; notes</button>
+              <button id="rTts" class="btn secondary txt" type="button">Read aloud</button>
+              <button id="rFull" class="btn secondary" type="button">Full screen</button>
             </div>
           </div>
-          <div class="srow" id="rTextRows"><span class="slabel">Text size</span>
-            <div class="stepper">
-              <button id="rFontDown" class="sbtn" aria-label="Smaller text"><span style="font-size:.85rem">A</span></button>
-              <b id="rFontVal">19</b>
-              <button id="rFontUp" class="sbtn" aria-label="Larger text"><span style="font-size:1.35rem">A</span></button>
-            </div>
+
+          <div data-panel="toc" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Contents</b></div>
+            <ul id="rTocList" class="toclist"></ul>
           </div>
-          <div class="srow" id="rFontRow"><span class="slabel">Font</span>
-            <div class="seg" role="group" aria-label="Font">
-              <button data-font="serif" class="segb" aria-pressed="true">Serif</button>
-              <button data-font="sans" class="segb" aria-pressed="false">Sans</button>
-            </div>
+
+          <div data-panel="search" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Search in book</b></div>
+            <input id="rSearchIn" class="search" type="search" placeholder="Search words or phrases" autocomplete="off">
+            <p id="rSearchInfo" class="muted small-note"></p>
+            <ul id="rSearchList" class="toclist"></ul>
           </div>
-          <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
-            <input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position">
+
+          <div data-panel="marks" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Bookmarks &amp; notes</b></div>
+            <div class="seg" role="group" aria-label="Show"><button class="segb" data-mtab="bm" aria-pressed="true" type="button">Bookmarks</button><button class="segb" data-mtab="hl" aria-pressed="false" type="button">Highlights &amp; notes</button></div>
+            <ul id="rMarksList" class="toclist marks"></ul>
+            <button id="rCopyNotes" class="btn secondary" type="button" hidden>Copy all highlights &amp; notes</button>
           </div>
-          <div class="srow btns">
-            <button id="rToc" class="btn secondary" type="button">Contents</button>
-            <button id="rFull" class="btn secondary" type="button">Full screen</button>
-          </div>
-          <ul id="rTocList" class="toclist" hidden></ul>
+        </div>
+      </div>
+
+      <div id="hlSheet" class="sheet" hidden>
+        <div id="hlBg" class="sheet-bg"></div>
+        <div class="sheet-card" role="dialog" aria-label="Highlight">
+          <div class="sheet-grab"></div>
+          <p id="hlText" class="hl-quote"></p>
+          <p id="hlNote" class="hl-note"></p>
+          <div class="srow"><span class="slabel">Colour</span><div class="hlcs"><button class="hlc" data-c="y" aria-label="Yellow"></button><button class="hlc" data-c="g" aria-label="Green"></button><button class="hlc" data-c="b" aria-label="Blue"></button><button class="hlc" data-c="p" aria-label="Pink"></button></div></div>
+          <div class="srow btns"><button id="hlEdit" class="btn secondary" type="button">Add / edit note</button><button id="hlDel" class="btn secondary danger" type="button">Delete highlight</button></div>
         </div>
       </div>
     </section>
@@ -303,13 +397,56 @@
       <div class="sheet-grab"></div>
       <div class="bs-head"><span id="bsCover" class="bs-cover"></span><div><b id="bsTitle"></b><small id="bsMeta"></small></div></div>
       <button id="bsOpen" class="bs-act" type="button"><svg class="ico"><use href="#i-book"/></svg>Open</button>
-      <button id="bsRename" class="bs-act" type="button"><svg class="ico"><use href="#i-edit"/></svg>Rename</button>
-      <button id="bsDownload" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Download EPUB</button>
+      <button id="bsEdit" class="bs-act" type="button"><svg class="ico"><use href="#i-edit"/></svg>Edit details, cover &amp; collection</button>
+      <button id="bsDownload" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Download file</button>
       <button id="bsRemove" class="bs-act danger" type="button"><svg class="ico"><use href="#i-trash"/></svg>Remove from this device</button>
     </div>
   </div>
 
-  <footer>v24</footer>
+  <div id="editSheet" class="sheet app" hidden>
+    <div id="editBg" class="sheet-bg"></div>
+    <div class="sheet-card" role="dialog" aria-label="Edit book details">
+      <div class="sheet-grab"></div>
+      <div class="edit-top">
+        <span id="edCover" class="bs-cover big"></span>
+        <div class="edit-cover-btns">
+          <label class="btn secondary">Choose cover<input id="edCoverFile" type="file" accept="image/*" hidden></label>
+          <button id="edCoverClear" class="btn text" type="button">Remove cover</button>
+        </div>
+      </div>
+      <label class="field"><span>Title</span><input id="edTitle" type="text" autocomplete="off"></label>
+      <label class="field"><span>Author</span><input id="edAuthor" type="text" autocomplete="off"></label>
+      <label class="field"><span>Collection (shelf)</span><input id="edCollection" type="text" list="colList" autocomplete="off" placeholder="e.g. Novels, Study, To read"></label>
+      <datalist id="colList"></datalist>
+      <div class="actions row"><button id="edSave" class="btn primary lg" type="button">Save</button><button id="edCancel" class="btn text lg" type="button">Cancel</button></div>
+    </div>
+  </div>
+
+  <div id="libSheet" class="sheet app" hidden>
+    <div id="libSheetBg" class="sheet-bg"></div>
+    <div class="sheet-card" role="dialog" aria-label="Library menu">
+      <div class="sheet-grab"></div>
+      <div class="bs-head"><div><b>Library</b><small id="libStats"></small></div></div>
+      <button id="lsBackup" class="bs-act" type="button"><svg class="ico"><use href="#i-download"/></svg>Back up library (ZIP)</button>
+      <label class="bs-act"><svg class="ico"><use href="#i-upload"/></svg>Restore from backup<input id="restoreFile" type="file" accept=".zip,application/zip" hidden></label>
+      <p class="muted small-note">Books live only on this device. Back them up before clearing browser data or changing phone.</p>
+    </div>
+  </div>
+
+  <div id="pageSheet" class="sheet app" hidden>
+    <div id="pageBg" class="sheet-bg"></div>
+    <div class="sheet-card tall" role="dialog" aria-label="Choose pages">
+      <div class="sheet-grab"></div>
+      <div class="subhead"><b>Choose pages</b></div>
+      <p id="pgHint" class="muted small-note">Tap the first page, then tap the last page.</p>
+      <div id="pgGrid" class="pggrid"></div>
+      <div class="actions row pgbar"><button id="pgUse" class="btn primary lg" type="button" disabled>Use selection</button><button id="pgAll" class="btn text lg" type="button">All pages</button></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <footer>v27</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>

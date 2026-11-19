@@ -50,6 +50,7 @@ export class Book {
       if (!drag.dir) {
         if (Math.abs(dx) < 8) return;
         const dir = dx < 0 ? 1 : -1; // 1 = next page, -1 = previous page
+        if (this.opts.turnStyle && this.opts.turnStyle !== 'curl') { if (Math.abs(dx) > 30) drag.swipe = dir; return; } // slide / no animation: a swipe just turns the page
         const st = this.status();
         if ((dir === 1 && !st.canNext) || (dir === -1 && !st.canPrev)) { drag = null; return; }
         const r = this.el.getBoundingClientRect();
@@ -67,8 +68,12 @@ export class Book {
     const end = (e, cancelled) => {
       const d = drag; drag = null;
       if (!d) return;
-      if (!d.dir) { // a tap
+      if (!d.dir) { // a tap (or a swipe when the page curl is switched off)
         if (cancelled) return;
+        if (d.swipe) return d.swipe === 1 ? this.next() : this.prev();
+        const sel = getSelection(); if (sel && !sel.isCollapsed) { sel.removeAllRanges(); return; } // a tap just clears a selection
+        const hit = document.elementFromPoint(e.clientX, e.clientY), mk = hit && hit.closest && hit.closest('mark.hl[data-h]');
+        if (mk && this.opts.onHighlightTap) return this.opts.onHighlightTap(mk.dataset.h);
         const r = this.el.getBoundingClientRect(), rel = (e.clientX - r.left) / r.width;
         if (this.opts.onCenterTap && rel > 0.3 && rel < 0.7) return this.opts.onCenterTap();
         if (this.opts.onCenterTap) return rel >= 0.7 ? this.next() : this.prev();
@@ -96,7 +101,7 @@ export class Book {
     const blank = '<div class="page blank"></div>';
     el.querySelector('.f-flat').innerHTML = this.pages[L * per] || blank;
     el.querySelector('.f-flap').innerHTML = per === 2 ? (this.pages[L * per + 1] || blank) : blank;
-    this._hydrate(el);
+    this._hydrate(el); this._decorate(el);
     this.el.appendChild(el);
     leaf.style.visibility = 'hidden';
     this.fold = { el, L, cy, leaf, under: el.querySelector('.f-under'), flat: el.querySelector('.f-flat'), clip: el.querySelector('.f-flapclip'), flap: el.querySelector('.f-flap'), shade: el.querySelector('.f-flapshade') };
@@ -180,6 +185,7 @@ export class Book {
     s.setProperty('--pw', pw + 'px'); s.setProperty('--ph', ph + 'px'); s.setProperty('--spread', this.spread);
     s.setProperty('--fs', (this.opts.fontSize || Math.max(12, Math.min(19, ph * 0.027))) + 'px');
     s.setProperty('--ff', this.opts.fontFamily || 'Georgia, "Times New Roman", serif');
+    s.setProperty('--lh', this.opts.lineHeight || 1.55); s.setProperty('--padx', (this.opts.padX ?? 26) + 'px');
     this.el.classList.toggle('spread', this.spread === 2);
 
     const keepPage = this.pages.length ? this.cur * this.spread : 0;
@@ -203,7 +209,7 @@ export class Book {
     // running title (top) and page number (bottom) for the framed preview; the full-screen reader draws its own
     const dec = (n) => (this.opts.fullBleed ? '' : `<div class="run">${esc(d.title || '')}</div><div class="num">${n}</div>`);
     this.hasCover = !this.opts.fullBleed || !!coverUrl;
-    this.toc = [];
+    this.toc = []; this.chunks = []; // chunks: where each piece of each block ended up { b: block, o: char offset, len, page }
     if (this.hasCover) out.push(coverUrl && (d.pageImages || d.lazyImages || this.opts.fullBleed)
       ? `<div class="page cover"><img src="${coverUrl}" alt="Cover"></div>`
       : `<div class="page cover"><h1>${esc(d.title)}</h1><p>${esc(d.author || '')}</p></div>`);
@@ -216,32 +222,34 @@ export class Book {
       return out;
     }
     const m = this.measure; m.innerHTML = '';
-    m.style.cssText = `width:${this.pw}px;height:${this.ph}px;--pw:${this.pw}px;--ph:${this.ph}px;--fs:${this.el.style.getPropertyValue('--fs')};--ff:${this.el.style.getPropertyValue('--ff')};--pad-t:calc(env(safe-area-inset-top, 0px) + 78px);--pad-b:calc(env(safe-area-inset-bottom, 0px) + 74px)`;
+    m.style.cssText = `width:${this.pw}px;height:${this.ph}px;--pw:${this.pw}px;--ph:${this.ph}px;--fs:${this.el.style.getPropertyValue('--fs')};--ff:${this.el.style.getPropertyValue('--ff')};--lh:${this.el.style.getPropertyValue('--lh')};--padx:${this.el.style.getPropertyValue('--padx')};--pad-t:calc(env(safe-area-inset-top, 0px) + 78px);--pad-b:calc(env(safe-area-inset-bottom, 0px) + 74px)`;
     const mk = () => { const p = document.createElement('div'); p.className = 'page'; p.style.position = 'relative'; p.style.height = this.ph + 'px'; m.appendChild(p); return p; };
     const overflows = (p) => p.scrollHeight > p.clientHeight + 1;
     let page = mk(), pageNo = 1; const tocRaw = [];
     const flush = () => { out.push(`<div class="page">${page.innerHTML}${dec(pageNo)}</div>`); pageNo++; page.remove(); page = mk(); };
-    let chapterNo = 0;
+    let chapterNo = 0, bi = -1;
     for (const b of d.blocks) {
+      bi++;
       if (b.t === 'img') { // picture block (e.g. chapter number); a chapter opener always starts a fresh page
         if (b.opener) { if (page.childElementCount) flush(); tocRaw.push({ level: 1, title: b.title || `Chapter ${++chapterNo}`, page: out.length }); }
         const node = document.createElement('div'); node.className = 'blk-img' + (b.opener ? ' opener' : '');
-        node.innerHTML = `<img src="${this._url(b.blob)}" alt="" style="width:${Math.max(8, Math.round((b.wf || 0.5) * 100))}%;aspect-ratio:${b.pw || 1}/${b.ph || 1}">`;
+        node.innerHTML = `<img src="${this._url(b.blob)}" alt="" style="width:${b.em ? b.em.toFixed(2) + 'em' : Math.max(8, Math.round((b.wf || 0.5) * 100)) + '%'};max-width:100%;aspect-ratio:${b.pw || 1}/${b.ph || 1}">`;
         page.appendChild(node);
         if (overflows(page) && page.childElementCount > 1) { page.removeChild(node); flush(); page.appendChild(node); }
+        this.chunks.push({ b: bi, o: 0, len: 0, page: out.length });
         continue;
       }
       if (b.t === 'h1' && page.childElementCount) flush();
       if (b.t === 'h1' || b.t === 'h2') tocRaw.push({ level: b.t === 'h1' ? 1 : 2, title: b.text.slice(0, 90), page: out.length });
       let words = b.t === 'p' ? b.text.split(' ') : null;
       const tag = b.t === 'p' ? 'p' : b.t;
-      let first = true;
+      let first = true, off = 0;
       while (true) {
         const node = document.createElement(tag);
         if (b.align === 'center') node.classList.add('center');
         node.textContent = words ? words.join(' ') : b.text;
         page.appendChild(node);
-        if (!overflows(page)) break;
+        if (!overflows(page)) { node.dataset.b = bi; node.dataset.o = off; this.chunks.push({ b: bi, o: off, len: node.textContent.length, page: out.length }); break; }
         if (!words) { // heading: move to next page
           page.removeChild(node);
           if (page.childElementCount) { flush(); continue; }
@@ -255,6 +263,8 @@ export class Book {
         }
         if (lo === 0) { page.removeChild(node); if (page.childElementCount) { flush(); continue; } words = words.slice(1); continue; }
         node.textContent = words.slice(0, lo).join(' '); if (!first) node.classList.add('first');
+        node.dataset.b = bi; node.dataset.o = off; this.chunks.push({ b: bi, o: off, len: node.textContent.length, page: out.length });
+        off += node.textContent.length + 1;
         words = words.slice(lo); first = false; flush();
         if (!words.length) break;
       }
@@ -268,7 +278,92 @@ export class Book {
 
   _url(blob) { const u = URL.createObjectURL(blob); (this.urls ||= []).push(u); return u; }
 
-  _fill(face, html) { face.innerHTML = html || '<div class="page blank"></div>'; this._hydrate(face); }
+  _fill(face, html) { face.innerHTML = html || '<div class="page blank"></div>'; this._hydrate(face); this._decorate(face); }
+
+  // wrap highlighted / searched-for ranges in <mark> (the stored page HTML always keeps the plain text)
+  _decorate(root) {
+    const hs = [...(this.opts.highlights || []), ...(this._hit ? [this._hit] : [])];
+    if (!hs.length) return;
+    root.querySelectorAll('[data-b]').forEach((node) => {
+      const b = +node.dataset.b, o = +node.dataset.o, text = node.textContent, end = o + text.length;
+      const mine = hs.filter((h) => h.b === b && h.e > o && h.s < end).sort((x, y) => x.s - y.s);
+      if (!mine.length) return;
+      node.textContent = ''; let pos = 0;
+      for (const h of mine) {
+        const s0 = Math.max(h.s - o, pos), e0 = Math.min(h.e - o, text.length);
+        if (e0 <= s0) continue;
+        if (s0 > pos) node.appendChild(document.createTextNode(text.slice(pos, s0)));
+        const m = document.createElement('mark'); m.className = `hl hl-${h.c || 'y'}${h.note ? ' has-note' : ''}`; if (h.id) m.dataset.h = h.id; m.textContent = text.slice(s0, e0); node.appendChild(m); pos = e0;
+      }
+      if (pos < text.length) node.appendChild(document.createTextNode(text.slice(pos)));
+    });
+  }
+
+  refreshMarks() { // call after highlights changed: redraw the pages that are on screen
+    this.leaves.forEach((leaf) => { if (leaf.dataset.f) leaf.querySelectorAll('.face').forEach((face) => { face.querySelectorAll('[data-b]').forEach((n) => { n.textContent = n.textContent; }); this._decorate(face); }); });
+  }
+
+  // current text selection -> highlight ranges { b, s, e, text } (one per paragraph the selection touches)
+  selectionRanges() {
+    const sel = getSelection(); if (!sel || sel.isCollapsed || !sel.rangeCount) return [];
+    const range = sel.getRangeAt(0), out = [];
+    if (!this.el.contains(range.commonAncestorContainer)) return [];
+    this.el.querySelectorAll('.face [data-b]').forEach((node) => {
+      if (!range.intersectsNode(node)) return;
+      const off = (container, offset) => { const r = document.createRange(); r.selectNodeContents(node); r.setEnd(container, offset); return r.toString().length; };
+      const len = node.textContent.length;
+      const s = node.contains(range.startContainer) ? off(range.startContainer, range.startOffset) : 0;
+      const e = node.contains(range.endContainer) ? off(range.endContainer, range.endOffset) : len;
+      if (e > s) out.push({ b: +node.dataset.b, s: +node.dataset.o + s, e: +node.dataset.o + e, text: node.textContent.slice(s, e) });
+    });
+    return out;
+  }
+
+  /* ---------- positions (stable across font changes) ---------- */
+  currentPage() { return this.cur; }
+  pageOfAnchor(a) {
+    if (!a) return 0;
+    if (a.p !== undefined) return Math.min(a.p, this.pages.length - 1);
+    const cs = (this.chunks || []).filter((c) => c.b === a.b);
+    if (!cs.length) return 0;
+    return (cs.find((c) => a.o >= c.o && a.o <= c.o + c.len) || cs[cs.length - 1]).page;
+  }
+  anchorOfPage(i) {
+    const c = (this.chunks || []).find((x) => x.page === i);
+    return c ? { b: c.b, o: c.o } : { p: i };
+  }
+  pageText(i) {
+    const tmp = document.createElement('div'); tmp.innerHTML = this.pages[i] || '';
+    return [...tmp.querySelectorAll('[data-b]')].map((n) => n.textContent).join('\n');
+  }
+  hitAt(h) { // flash a search hit on the page it lives on
+    this._hit = h ? { ...h, c: 'hit' } : null; this.refreshMarks();
+  }
+
+  // full-text search over the book's paragraphs
+  search(q, max = 150) {
+    const needle = q.trim().toLowerCase(), out = [];
+    if (needle.length < 2 || !this.data || !this.data.blocks) return out;
+    this.data.blocks.forEach((b, bi) => {
+      if (!b.text) return;
+      const low = b.text.toLowerCase(); let i = low.indexOf(needle);
+      while (i >= 0 && out.length < max) {
+        out.push({ b: bi, s: i, e: i + needle.length, page: this.pageOfAnchor({ b: bi, o: i }), snippet: (i > 40 ? '…' : '') + b.text.slice(Math.max(0, i - 40), i + needle.length + 60) + (i + needle.length + 60 < b.text.length ? '…' : ''), at: i - Math.max(0, i - 40) + (i > 40 ? 1 : 0) });
+        i = low.indexOf(needle, i + needle.length);
+      }
+    });
+    return out;
+  }
+
+  // rough reading time: ~230 words a minute
+  timeLeft() {
+    if (!this.data || !this.data.blocks || !this.chunks.length) return null;
+    const words = (t) => (t ? t.split(/\s+/).length : 0), perPage = new Map();
+    this.chunks.forEach((c) => { const b = this.data.blocks[c.b]; perPage.set(c.page, (perPage.get(c.page) || 0) + (b && b.text ? Math.round(words(b.text) * c.len / Math.max(1, b.text.length)) : 0)); });
+    const upTo = (end) => { let n = 0; for (const [p, w] of perPage) if (p >= this.cur && p < end) n += w; return Math.round(n / 230); };
+    const next = (this.toc || []).map((t) => t.page).filter((p) => p > this.cur)[0];
+    return { book: upTo(Infinity), chapter: next !== undefined ? upTo(next) : null };
+  }
 
   // lazy page images (EPUBs opened from a file): load the image for each <img data-i> when it is shown
   _hydrate(root) {
@@ -320,21 +415,42 @@ export class Book {
 
   goToPage(i) { if (this.busy || !this.leaves.length) return; this.cur = Math.max(0, Math.min(this._maxCur(), i)); this._update(true); }
 
-  setFont({ size, family }) { // re-paginate with new text settings, keeping the reading position
+  setFont({ size, family, lineHeight, padX }) { // re-paginate with new text settings, keeping the reading position
     if (size) this.opts.fontSize = size;
     if (family) this.opts.fontFamily = family;
+    if (lineHeight) this.opts.lineHeight = lineHeight;
+    if (padX !== undefined) this.opts.padX = padX;
     if (!this.data || this.busy) return;
+    const a = this.anchorOfPage(this.cur);           // remember the exact text on screen, not just a percentage
     this._startFrac = this.progress(); this._layout();
+    if (a && a.b !== undefined) this.goToPage(this.pageOfAnchor(a));
+  }
+
+  // simple slide / instant page changes (the paper curl lives in next()/prev() below)
+  _slide(dir) {
+    const style = this.opts.turnStyle;
+    if (style === 'none' || this.spread !== 1 || matchMedia('(prefers-reduced-motion: reduce)').matches) { this.cur += dir; this._update(true); return; }
+    this.busy = true;
+    const ov = document.createElement('div'); ov.className = 'slide';
+    ov.style.cssText = `left:0;top:0;width:${this.pw}px;height:${this.ph}px;transform:translateX(${dir === 1 ? 0 : -105}%)`;
+    this._fill(ov, this.pages[dir === 1 ? this.cur : this.cur - 1]);
+    this.el.appendChild(ov);
+    if (dir === 1) { this.cur += 1; this._update(true); }
+    void ov.offsetWidth;
+    ov.style.transition = 'transform .28s ease'; ov.style.transform = `translateX(${dir === 1 ? -105 : 0}%)`;
+    setTimeout(() => { if (dir === -1) { this.cur -= 1; this._update(true); } ov.remove(); this.busy = false; }, 300);
   }
 
   next() {
     if (this.busy || !this.status().canNext) return;
+    if (this.opts.turnStyle && this.opts.turnStyle !== 'curl') return this._slide(1);
     const w = this.pw, cy = this.ph;
     this._startFold(this.cur, cy);
     this._animate({ x: w, y: cy }, { x: -w, y: cy }, 750, this.ph * 0.12, () => this._finishFold(1, true));
   }
   prev() {
     if (this.busy || this.cur <= 0) return;
+    if (this.opts.turnStyle && this.opts.turnStyle !== 'curl') return this._slide(-1);
     const w = this.pw, cy = this.ph;
     this._startFold(this.cur - 1, cy);
     this._animate({ x: -w, y: cy }, { x: w, y: cy }, 750, this.ph * 0.12, () => this._finishFold(-1, true));

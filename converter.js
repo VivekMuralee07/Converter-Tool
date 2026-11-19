@@ -1,5 +1,6 @@
 // PDF -> EPUB conversion, entirely client-side (pdf.js + JSZip).
 import * as pdfjsLib from './lib/pdf.min.mjs';
+import { loadScript } from './loader.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -204,6 +205,62 @@ export async function cropImages(page, boxes, scale = 2.5) {
   return boxes.filter((b) => b.blob);
 }
 
+/* ---------- formulas and tables kept as pictures ---------- */
+const MATHCH = /[=±×÷∑∫√∂∆≤≥≈≠∞→←↔∝≡∈∉∪∩⊂⊃∀∃∇∏°′″²³]/, GREEK = /[α-ωΑ-Ω]/;
+const isMathLine = (l) => l.text.length <= 95 && /[\p{L}\p{N}]/u.test(l.text) && (l.text.match(/\p{L}{3,}/gu) || []).length <= 5 && (MATHCH.test(l.text) || GREEK.test(l.text)) && (l.sym >= 0.1 || /=/.test(l.text)); // few real words + operators = display formula
+const isTableLine = (l) => l.cols >= 2 && l.text.length <= 140;
+
+// Splits a page's lines into ordinary text lines and picture regions (display formulas, tables).
+export function findRegions(lines) {
+  const keep = [], boxes = []; let cur = null;
+  const close = () => {
+    if (!cur) return;
+    const math = cur.lines.some(isMathLine), tableLines = cur.lines.filter(isTableLine).length;
+    if (math || tableLines >= 3) {
+      const ls = cur.lines, pw = ls[0].pageW, ph = ls[0].pageH, pad = 3;
+      const x0 = Math.max(0, Math.min(...ls.map((l) => l.x)) - pad), x1 = Math.min(pw, Math.max(...ls.map((l) => l.right)) + pad);
+      const y1 = Math.min(ph, Math.max(...ls.map((l) => l.y + l.size * 0.95)) + pad), y0 = Math.max(0, Math.min(...ls.map((l) => l.y - l.size * 0.4)) - pad);
+      boxes.push({ x0, x1, y0, y1, w: x1 - x0, h: y1 - y0, pageW: pw, pageH: ph, region: true });
+    } else keep.push(...cur.lines);
+    cur = null;
+  };
+  for (const l of lines) { // lines come top to bottom
+    const flagged = isMathLine(l) || isTableLine(l) || (cur && l.text.length <= 3);
+    if (flagged && cur && cur.last.y - l.y <= Math.max(cur.last.size, l.size) * 2.4) { cur.lines.push(l); cur.last = l; }
+    else { close(); if (flagged) cur = { lines: [l], last: l }; else keep.push(l); }
+  }
+  close();
+  return { keep, boxes };
+}
+
+/* ---------- OCR (scanned pages) ---------- */
+export const OCR_LANGS = { eng: 'English', hin: 'Hindi', tam: 'Tamil', tel: 'Telugu', mal: 'Malayalam', kan: 'Kannada', ben: 'Bengali', mar: 'Marathi', guj: 'Gujarati', fra: 'French', deu: 'German', spa: 'Spanish', ita: 'Italian', por: 'Portuguese', ara: 'Arabic', rus: 'Russian' };
+
+async function makeOcr(lang) {
+  await loadScript('lib/tesseract/tesseract.min.js');
+  const local = lang === 'eng';
+  return window.Tesseract.createWorker(lang, 1, {
+    workerPath: 'lib/tesseract/worker.min.js', corePath: 'lib/tesseract', workerBlobURL: false, gzip: true,
+    langPath: local ? 'lib/tesseract/lang' : `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${lang}/4.0.0_best_int`, // English is built in; other languages download once
+  });
+}
+
+// Reads one page image with OCR and returns lines in the same shape as extractLines()
+async function ocrPageLines(worker, page, scale = 2.2) {
+  const vp1 = page.getViewport({ scale: 1 }), vp = page.getViewport({ scale });
+  const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  const { data } = await worker.recognize(c, {}, { blocks: true, text: false });
+  c.width = c.height = 0;
+  const raw = (data.lines || []).filter((l) => l.text && l.text.trim() && l.confidence > 35 && l.bbox.y1 > l.bbox.y0);
+  const hs = raw.map((l) => l.bbox.y1 - l.bbox.y0).sort((a, b) => a - b), med = hs[Math.floor(hs.length / 2)] || 1;
+  return raw.map((l) => {
+    const h = l.bbox.y1 - l.bbox.y0, eff = h > med * 1.35 ? h : med; // lines with descenders must not look like headings
+    return { text: l.text.replace(/\s+/g, ' ').trim(), x: l.bbox.x0 / scale, right: l.bbox.x1 / scale, y: vp1.height - l.bbox.y1 / scale + h * 0.2 / scale, size: eff / scale * 0.78, pageH: vp1.height, pageW: vp1.width, cols: 0, sym: 0 };
+  });
+}
+
 /* ---------- text extraction ---------- */
 export async function extractLines(page) {
   const vp = page.getViewport({ scale: 1 });
@@ -220,15 +277,17 @@ export async function extractLines(page) {
   }
   return lines.map((l) => {
     l.items.sort((a, b) => a.x - b.x);
-    let text = '', prev = null, chars = {};
+    let text = '', prev = null, chars = {}, cols = 0;
     for (const it of l.items) {
+      if (prev && it.x - (prev.x + prev.w) > Math.max(it.size * 1.8, 14)) cols++; // wide gap = another table column
       if (prev && !text.endsWith(' ') && !it.str.startsWith(' ') && it.x - (prev.x + prev.w) > it.size * 0.15) text += ' ';
       text += it.str; prev = it;
       const k = Math.round(it.size * 2) / 2; chars[k] = (chars[k] || 0) + it.str.length;
     }
     const size = +Object.entries(chars).sort((a, b) => b[1] - a[1])[0][0];
     const first = l.items[0], lastIt = l.items[l.items.length - 1];
-    return { text: text.replace(/\s+/g, ' ').trim(), y: l.y, x: first.x, right: lastIt.x + lastIt.w, size, pageH: vp.height, pageW: vp.width };
+    const clean = text.replace(/\s+/g, ' ').trim(), sym = clean.length ? (clean.match(/[^\p{L}\p{N}\s.,;:!?'"()\-–—’“”‘]/gu) || []).length / clean.length : 0;
+    return { text: clean, y: l.y, x: first.x, right: lastIt.x + lastIt.w, size, pageH: vp.height, pageW: vp.width, cols, sym };
   }).filter((l) => l.text);
 }
 
@@ -272,8 +331,8 @@ export function buildBlocks(pagesLines, pagesImgs = []) {
     items.forEach((it, idx) => {
       if (it.im) {
         const im = it.im;
-        const opener = idx === 0 && lines.length >= 3 && im.w <= im.pageW * 0.55 && im.h <= im.pageH * 0.3; // picture that starts the page = chapter opener
-        blocks.push({ t: 'img', blob: im.blob, mime: im.mime, pw: im.pw, ph: im.ph, wf: Math.min(1, im.w / im.pageW), opener, page: pi });
+        const opener = !im.region && idx === 0 && lines.length >= 3 && im.w <= im.pageW * 0.55 && im.h <= im.pageH * 0.3; // picture that starts the page = chapter opener
+        blocks.push({ t: 'img', blob: im.blob, mime: im.mime, pw: im.pw, ph: im.ph, wf: Math.min(1, im.w / im.pageW), em: im.region ? im.w / body : undefined, region: !!im.region, opener, page: pi });
         prev = null; return;
       }
       const l = it.l;
@@ -344,13 +403,13 @@ const XHTML = (title, body, extra = '') => `<?xml version="1.0" encoding="utf-8"
 <body${body.startsWith('<div class="fx"') ? ' class="fxb"' : ''}>${body}</body></html>`;
 
 const CSS = `body{font-family:serif;line-height:1.5;margin:0 .6em}h1{font-size:1.6em;margin:1.2em 0 .6em}h2{font-size:1.25em;margin:1em 0 .4em}
-p{margin:0 0 .8em;text-align:justify}.center{text-align:center}.fig{text-align:center;margin:1em 0}.fig img{max-width:100%;height:auto}.fig.chap{margin:2.5em 0 1.5em}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
+p{margin:0 0 .8em;text-align:justify}.center{text-align:center}.fig{text-align:center;margin:1em 0}.fig img{max-width:100%;height:auto}.fig.chap{margin:2.5em 0 1.5em}.fig.eq{margin:.7em 0}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
 html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff}
 .fx img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}`;
 
 function uuid() { return 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); }
 
-export async function convert(file, { title, author, mode, fit = false, aspect = 0.5, zoom = 1.5, from = 1, to = 0 }, onProgress = () => {}) {
+export async function convert(file, { title, author, mode, fit = false, aspect = 0.5, zoom = 1.5, from = 1, to = 0, ocr: opts_ocr = null, keepMath = true }, onProgress = () => {}) {
   const { pdf } = await openPdf(file);
   const total = pdf.numPages;
   const first = Math.min(total, Math.max(1, from | 0 || 1)), last = Math.min(total, Math.max(first, to | 0 || total));
@@ -427,33 +486,51 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
     }
     if (!result.pageImages.length) { add(cover, 'Page 1', 'Page 1'); }
   } else {
-    const raw = [], boxes = [];
-    for (let i = first; i <= last; i++) {
-      onProgress((i - first + 1) / n * 0.7, `Reading page ${i} of ${last}`);
-      const pg = await pdf.getPage(i);
-      raw.push(await extractLines(pg));
-      boxes.push(await imageBoxes(pg).catch(() => []));
-      await sleep0();
-    }
-    // keep pictures only for text-style books; a PDF with pictures on most pages is illustrated/scanned (use Fixed pages)
-    const withImg = boxes.filter((b) => b.length).length;
-    const useImgs = withImg > 0 && withImg <= Math.max(3, n * 0.5);
-    const pagesImgs = boxes.map(() => []);
-    if (useImgs) {
-      let done = 0, total = Math.min(withImg, 250);
-      for (let k = 0; k < boxes.length && done < total; k++) {
-        if (!boxes[k].length) continue;
-        onProgress(0.7 + 0.12 * done / total, `Saving pictures (${++done} of ${total})`);
-        pagesImgs[k] = await cropImages(await pdf.getPage(first + k), boxes[k].slice(0, 6)).catch(() => []);
+    const raw = [], boxes = [], scanned = [];
+    let ocr = null, ocrPages = 0;
+    try {
+      for (let i = first; i <= last; i++) {
+        onProgress((i - first + 1) / n * 0.55, `Reading page ${i} of ${last}`);
+        const pg = await pdf.getPage(i);
+        let lines = await extractLines(pg), viaOcr = false;
+        if (opts_ocr && lines.reduce((t, l) => t + l.text.length, 0) < 40) { // a page without a text layer: read it with OCR
+          onProgress((i - first + 1) / n * 0.55, `Reading page ${i} of ${last} with OCR (${++ocrPages})`);
+          ocr = ocr || await makeOcr(opts_ocr);
+          lines = await ocrPageLines(ocr, pg); viaOcr = true;
+        }
+        raw.push(lines); scanned.push(viaOcr);
+        boxes.push(viaOcr ? [] : await imageBoxes(pg).catch(() => []));
         await sleep0();
       }
+    } finally { if (ocr) ocr.terminate().catch(() => {}); }
+    result.ocrPages = ocrPages;
+
+    // headers/footers/watermarks out; then (optionally) display formulas and tables become pictures
+    let clean = stripHeadersFooters(raw);
+    const regionBoxes = clean.map(() => []);
+    if (keepMath) {
+      let total = 0;
+      clean = clean.map((lines, k) => {
+        if (scanned[k]) return lines;
+        const r = findRegions(lines); if (total + r.boxes.length > 2500) return lines; // keep a sane EPUB size
+        total += r.boxes.length; regionBoxes[k] = r.boxes; return r.keep;
+      });
     }
-    onProgress(0.85, 'Building chapters…');
-    const blocks = buildBlocks(stripHeadersFooters(raw), pagesImgs);
+    // decorative pictures only for text-style books: a PDF with pictures on most pages is illustrated/scanned (use Fixed pages)
+    const withImg = boxes.filter((b) => b.length).length, useImgs = withImg > 0 && withImg <= Math.max(3, n * 0.5);
+    const pagesImgs = boxes.map(() => []), todo = [];
+    for (let k = 0; k < n; k++) { const all = [...(useImgs ? boxes[k].slice(0, 6) : []), ...regionBoxes[k]]; if (all.length) todo.push([k, all]); }
+    for (const [d, [k, all]] of todo.entries()) {
+      onProgress(0.55 + 0.3 * d / todo.length, `Saving pictures and formulas (${d + 1} of ${todo.length} pages)`);
+      pagesImgs[k] = await cropImages(await pdf.getPage(first + k), all).catch(() => []);
+      await sleep0();
+    }
+    onProgress(0.88, 'Building chapters…');
+    const blocks = buildBlocks(clean, pagesImgs);
     result.blocks = blocks;
     result.hasText = blocks.some((b) => b.t !== 'img');
     const flat = raw.flat();
-    result.messy = flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
+    result.messy = !keepMath && flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
     const chapters = chunkChapters(blocks, n, title, first - 1);
     let imgN = 0;
     chapters.forEach((c, i) => {
@@ -463,7 +540,8 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
           const f = `images/img${++imgN}.${b.mime === 'image/jpeg' ? 'jpg' : 'png'}`;
           zip.file(`OEBPS/${f}`, b.blob);
           manifest += `<item id="img${imgN}" href="${f}" media-type="${b.mime}"/>`;
-          return `<div class="fig${b.opener ? ' chap' : ''}"><img src="${f}" alt="${esc(b.title || '')}" style="width:${Math.max(8, Math.round(b.wf * 100))}%"/></div>`;
+          const wd = b.em ? `${b.em.toFixed(2)}em;max-width:100%` : `${Math.max(8, Math.round(b.wf * 100))}%`;
+          return `<div class="fig${b.opener ? ' chap' : ''}${b.region ? ' eq' : ''}"><img src="${f}" alt="${esc(b.title || (b.region ? 'formula or table' : ''))}" style="width:${wd}"/></div>`;
         }
         if (b.t === 'p') return `<p${b.align === 'center' ? ' class="center"' : ''}>${esc(b.text)}</p>`;
         return `<${b.t}>${esc(b.text)}</${b.t}>`;
