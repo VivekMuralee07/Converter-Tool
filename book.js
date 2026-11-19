@@ -200,17 +200,19 @@ export class Book {
     const d = this.data, out = [];
     // cover (in the full-screen reader a text book without a cover image starts straight at page 1)
     const coverUrl = d.coverBlob ? this._url(d.coverBlob) : null;
+    // running title (top) and page number (bottom) for the framed preview; the full-screen reader draws its own
+    const dec = (n) => (this.opts.fullBleed ? '' : `<div class="run">${esc(d.title || '')}</div><div class="num">${n}</div>`);
     this.hasCover = !this.opts.fullBleed || !!coverUrl;
     this.toc = [];
     if (this.hasCover) out.push(coverUrl && (d.pageImages || d.lazyImages || this.opts.fullBleed)
       ? `<div class="page cover"><img src="${coverUrl}" alt="Cover"></div>`
       : `<div class="page cover"><h1>${esc(d.title)}</h1><p>${esc(d.author || '')}</p></div>`);
     if (d.lazyImages) {
-      for (let i = 0; i < d.imageCount; i++) out.push(`<div class="page imgpage"><img data-i="${i}" alt="Page ${i + 1}"></div>`);
+      for (let i = 0; i < d.imageCount; i++) out.push(`<div class="page imgpage"><img data-i="${i}" alt="Page ${i + 1}">${dec(out.length)}</div>`);
       return out;
     }
     if (d.pageImages) {
-      d.pageImages.forEach((b, i) => { if (i === 0 && d.skipFirst) return; out.push(`<div class="page imgpage"><img src="${this._url(b)}" alt="Page ${i + 1}"></div>`); });
+      d.pageImages.forEach((b, i) => { if (i === 0 && d.skipFirst) return; out.push(`<div class="page imgpage"><img src="${this._url(b)}" alt="Page ${i + 1}">${dec(out.length)}</div>`); });
       return out;
     }
     const m = this.measure; m.innerHTML = '';
@@ -218,7 +220,7 @@ export class Book {
     const mk = () => { const p = document.createElement('div'); p.className = 'page'; p.style.position = 'relative'; p.style.height = this.ph + 'px'; m.appendChild(p); return p; };
     const overflows = (p) => p.scrollHeight > p.clientHeight + 1;
     let page = mk(), pageNo = 1; const tocRaw = [];
-    const flush = () => { out.push(`<div class="page">${page.innerHTML}${this.opts.fullBleed ? '' : `<div class="num">${pageNo}</div>`}</div>`); pageNo++; page.remove(); page = mk(); };
+    const flush = () => { out.push(`<div class="page">${page.innerHTML}${dec(pageNo)}</div>`); pageNo++; page.remove(); page = mk(); };
     for (const b of d.blocks) {
       if (b.t === 'h1' && page.childElementCount) flush();
       if (b.t === 'h1' || b.t === 'h2') tocRaw.push({ level: b.t === 'h1' ? 1 : 2, title: b.text.slice(0, 90), page: out.length });

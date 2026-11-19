@@ -216,6 +216,11 @@
 
       <div class="r-top">
         <span id="rTitle" class="r-title"></span>
+        <div class="themes quick" role="group" aria-label="Reading theme">
+          <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
+          <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
+          <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm" aria-pressed="false"></button>
+        </div>
         <button id="rBack" class="r-btn" aria-label="Close book"><svg class="ico"><use href="#i-close"/></svg></button>
       </div>
       <div class="r-bottom">
@@ -229,7 +234,7 @@
           <div class="sheet-grab"></div>
           <div class="srow"><span class="slabel">Theme</span>
             <div class="themes" role="group" aria-label="Reading theme">
-              <button class="tbtn" data-theme="light" aria-label="Light page" title="Light" aria-pressed="true"></button>
+              <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
               <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
               <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
             </div>
@@ -260,7 +265,7 @@
     </section>
   </main>
 
-  <footer>v20 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v22 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
