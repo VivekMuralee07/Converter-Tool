@@ -104,9 +104,9 @@
         </div>
         <select id="gLang" aria-label="Language (Project Gutenberg)"></select>
       </div>
-      <div id="gErr" class="alert" role="alert" hidden></div>
+      <div id="gErr" class="alert" role="alert" hidden><span id="gErrText"></span> <button id="gRetry" class="btn secondary" type="button" style="min-height:36px;margin-top:8px">Try again</button></div>
       <ul id="gList" class="glist"></ul>
-      <div id="gSpin" class="center" hidden><div class="spin"></div></div>
+      <div id="gSpin" class="center" hidden><div class="spin"></div><p id="gSlow" class="muted small-note" hidden>Still searching — the free book services can be slow. You can wait, or search again.</p></div>
       <p id="gEmpty" class="muted center" hidden>No books found. Try different words.</p>
       <div class="center"><button id="gMore" class="btn secondary" type="button" hidden>Show more</button></div>
       <p class="muted small-note center">Books come from Project Gutenberg and the Internet Archive. Copyright rules differ by country, so check each book's page before relying on it. Files you download stay on this device.</p>
@@ -476,7 +476,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <footer>v28</footer>
+  <footer>v29</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
