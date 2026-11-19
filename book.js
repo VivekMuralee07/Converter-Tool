@@ -164,17 +164,22 @@ export class Book {
 
   _layout() {
     const aw = this.stage.clientWidth, ah = this.stage.clientHeight;
-    this.spread = aw >= 820 ? 2 : 1;
-    // two-page spread: classic book proportion; single page: follow the screen shape so phones are filled
-    const m = this.opts.margin ?? 16;
-    const ratio = this.spread === 2 ? 0.72 : Math.max(0.5, Math.min(0.8, (aw - m) / (ah - m)));
-    let ph = Math.min(ah - m, (aw - m - 8) / this.spread / ratio);
-    ph = Math.max(280, Math.floor(ph));
-    const pw = Math.floor(ph * ratio);
+    const fb = !!this.opts.fullBleed;
+    this.spread = !fb && aw >= 820 ? 2 : 1;
+    let ph, pw;
+    if (fb) { ph = ah; pw = Math.min(aw, this.opts.maxWidth || 760); } // edge-to-edge page (centred column on wide screens)
+    else {
+      // two-page spread: classic book proportion; single page: follow the screen shape so phones are filled
+      const m = this.opts.margin ?? 16;
+      const ratio = this.spread === 2 ? 0.72 : Math.max(0.5, Math.min(0.8, (aw - m) / (ah - m)));
+      ph = Math.max(280, Math.floor(Math.min(ah - m, (aw - m - 8) / this.spread / ratio)));
+      pw = Math.floor(ph * ratio);
+    }
     this.ph = ph; this.pw = pw;
     const s = this.el.style;
     s.setProperty('--pw', pw + 'px'); s.setProperty('--ph', ph + 'px'); s.setProperty('--spread', this.spread);
-    s.setProperty('--fs', Math.max(12, Math.min(19, ph * 0.027)) + 'px');
+    s.setProperty('--fs', (this.opts.fontSize || Math.max(12, Math.min(19, ph * 0.027))) + 'px');
+    s.setProperty('--ff', this.opts.fontFamily || 'Georgia, "Times New Roman", serif');
     this.el.classList.toggle('spread', this.spread === 2);
 
     const keepPage = this.pages.length ? this.cur * this.spread : 0;
@@ -193,9 +198,11 @@ export class Book {
 
   _paginate() {
     const d = this.data, out = [];
-    // cover
+    // cover (in the full-screen reader a text book without a cover image starts straight at page 1)
     const coverUrl = d.coverBlob ? this._url(d.coverBlob) : null;
-    out.push((d.pageImages || d.lazyImages) && coverUrl
+    this.hasCover = !this.opts.fullBleed || !!coverUrl;
+    this.toc = [];
+    if (this.hasCover) out.push(coverUrl && (d.pageImages || d.lazyImages || this.opts.fullBleed)
       ? `<div class="page cover"><img src="${coverUrl}" alt="Cover"></div>`
       : `<div class="page cover"><h1>${esc(d.title)}</h1><p>${esc(d.author || '')}</p></div>`);
     if (d.lazyImages) {
@@ -207,13 +214,14 @@ export class Book {
       return out;
     }
     const m = this.measure; m.innerHTML = '';
-    m.style.cssText = `width:${this.pw}px;height:${this.ph}px;--pw:${this.pw}px;--ph:${this.ph}px;--fs:${this.el.style.getPropertyValue('--fs')}`;
+    m.style.cssText = `width:${this.pw}px;height:${this.ph}px;--pw:${this.pw}px;--ph:${this.ph}px;--fs:${this.el.style.getPropertyValue('--fs')};--ff:${this.el.style.getPropertyValue('--ff')};--pad-t:calc(env(safe-area-inset-top, 0px) + 78px);--pad-b:calc(env(safe-area-inset-bottom, 0px) + 74px)`;
     const mk = () => { const p = document.createElement('div'); p.className = 'page'; p.style.position = 'relative'; p.style.height = this.ph + 'px'; m.appendChild(p); return p; };
     const overflows = (p) => p.scrollHeight > p.clientHeight + 1;
-    let page = mk(), pageNo = 1;
-    const flush = () => { out.push(`<div class="page">${page.innerHTML}<div class="num">${pageNo++}</div></div>`); page.remove(); page = mk(); };
+    let page = mk(), pageNo = 1; const tocRaw = [];
+    const flush = () => { out.push(`<div class="page">${page.innerHTML}${this.opts.fullBleed ? '' : `<div class="num">${pageNo}</div>`}</div>`); pageNo++; page.remove(); page = mk(); };
     for (const b of d.blocks) {
       if (b.t === 'h1' && page.childElementCount) flush();
+      if (b.t === 'h1' || b.t === 'h2') tocRaw.push({ level: b.t === 'h1' ? 1 : 2, title: b.text.slice(0, 90), page: out.length });
       let words = b.t === 'p' ? b.text.split(' ') : null;
       const tag = b.t === 'p' ? 'p' : b.t;
       let first = true;
@@ -242,6 +250,7 @@ export class Book {
     }
     if (page.childElementCount) flush();
     m.innerHTML = '';
+    this.toc = tocRaw.filter((t) => t.level === 1).length >= 2 ? tocRaw.filter((t) => t.level === 1) : tocRaw;
     return out;
   }
 
@@ -285,11 +294,25 @@ export class Book {
   }
 
   status() {
-    const total = this.pages.length - 1, per = this.spread, c = this.cur;
+    const total = this.pages.length - (this.hasCover ? 1 : 0), per = this.spread, c = this.cur;
+    const canPrev = c > 0, canNext = c < this.leaves.length - (per === 2 ? 0 : 1);
+    if (this.opts.fullBleed) {
+      const n = c + 1 - (this.hasCover ? 1 : 0);
+      return { label: this.hasCover && c === 0 ? 'Cover' : `${n} of ${total}`, n, total, canPrev, canNext };
+    }
     let label = 'Cover';
     if (c > 0 && per === 2) { const l = 2 * c - 1, r = Math.min(2 * c, total); label = l >= r ? `Page ${l}` : `Pages ${l}–${r}`; }
     else if (c > 0) label = `Page ${c}`;
-    return { label: `${label} · ${total} pages`, canPrev: c > 0, canNext: c < this.leaves.length - (per === 2 ? 0 : 1) };
+    return { label: `${label} · ${total} pages`, canPrev, canNext };
+  }
+
+  goToPage(i) { if (this.busy || !this.leaves.length) return; this.cur = Math.max(0, Math.min(this._maxCur(), i)); this._update(true); }
+
+  setFont({ size, family }) { // re-paginate with new text settings, keeping the reading position
+    if (size) this.opts.fontSize = size;
+    if (family) this.opts.fontFamily = family;
+    if (!this.data || this.busy) return;
+    this._startFrac = this.progress(); this._layout();
   }
 
   next() {

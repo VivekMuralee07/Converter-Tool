@@ -23,6 +23,8 @@
     <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12.5l3 3 5-6"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14M10 11v5M14 11v5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="4" cy="21" r=".6"/><circle cx="12" cy="21" r=".6"/><circle cx="20" cy="21" r=".6"/></symbol>
     <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
   </svg>
 
@@ -210,27 +212,55 @@
     <div id="rProg" class="rprog" hidden><i></i></div>
     <section id="stepReader" hidden>
       <div id="warmVeil" aria-hidden="true"></div>
-      <div class="reader-bar">
-        <button id="rBack" class="btn ghost">← Back</button>
-        <strong id="rTitle"></strong>
-        <div class="themes" role="group" aria-label="Reading theme">
-          <button class="tbtn" data-theme="light" aria-label="Light page" title="Light" aria-pressed="true"></button>
-          <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
-          <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
-        </div>
-        <button id="rFull" class="btn ghost" aria-label="Full screen">⛶</button>
-      </div>
       <div id="rStage" class="stage reader"><div id="rBook" class="book" aria-label="Book"></div></div>
-      <div class="rseek"><input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position"></div>
-      <div class="pager">
-        <button id="rPrev" class="btn round" aria-label="Previous page">‹</button>
-        <span id="rInfo">–</span>
-        <button id="rNext" class="btn round" aria-label="Next page">›</button>
+
+      <div class="r-top">
+        <span id="rTitle" class="r-title"></span>
+        <button id="rBack" class="r-btn" aria-label="Close book"><svg class="ico"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="r-bottom">
+        <span id="rInfo" class="r-count">–</span>
+        <button id="rMenu" class="r-btn" aria-label="Reading settings"><svg class="ico"><use href="#i-menu"/></svg></button>
+      </div>
+
+      <div id="rSheet" class="sheet" hidden>
+        <div id="rSheetBg" class="sheet-bg"></div>
+        <div class="sheet-card" role="dialog" aria-label="Reading settings">
+          <div class="sheet-grab"></div>
+          <div class="srow"><span class="slabel">Theme</span>
+            <div class="themes" role="group" aria-label="Reading theme">
+              <button class="tbtn" data-theme="light" aria-label="Light page" title="Light" aria-pressed="true"></button>
+              <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
+              <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
+            </div>
+          </div>
+          <div class="srow" id="rTextRows"><span class="slabel">Text size</span>
+            <div class="stepper">
+              <button id="rFontDown" class="sbtn" aria-label="Smaller text"><span style="font-size:.85rem">A</span></button>
+              <b id="rFontVal">19</b>
+              <button id="rFontUp" class="sbtn" aria-label="Larger text"><span style="font-size:1.35rem">A</span></button>
+            </div>
+          </div>
+          <div class="srow" id="rFontRow"><span class="slabel">Font</span>
+            <div class="seg" role="group" aria-label="Font">
+              <button data-font="serif" class="segb" aria-pressed="true">Serif</button>
+              <button data-font="sans" class="segb" aria-pressed="false">Sans</button>
+            </div>
+          </div>
+          <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
+            <input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position">
+          </div>
+          <div class="srow btns">
+            <button id="rToc" class="btn secondary" type="button">Contents</button>
+            <button id="rFull" class="btn secondary" type="button">Full screen</button>
+          </div>
+          <ul id="rTocList" class="toclist" hidden></ul>
+        </div>
       </div>
     </section>
   </main>
 
-  <footer>v19 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v20 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
