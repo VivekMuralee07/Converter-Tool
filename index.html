@@ -30,6 +30,7 @@
     <symbol id="i-tools" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></symbol>
     <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+    <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4.5L6 21z"/></symbol>
     <symbol id="i-wand" viewBox="0 0 24 24"><path d="M15 4l5 5L8 21l-5-5L15 4z"/><path d="M13 6l5 5"/></symbol>
   </svg>
 
@@ -248,10 +249,12 @@
     <div id="rProg" class="rprog" hidden><i></i></div>
     <section id="stepReader" hidden>
       <div id="warmVeil" aria-hidden="true"></div>
+      <div id="dimVeil" aria-hidden="true"></div>
       <div id="rStage" class="stage reader"><div id="rBook" class="book" aria-label="Book"></div></div>
 
       <div class="r-top">
         <span id="rTitle" class="r-title"></span>
+        <button id="rMark" class="r-btn flat" aria-label="Bookmark this page" aria-pressed="false"><svg class="ico"><use href="#i-bookmark"/></svg></button>
         <div class="themes quick" role="group" aria-label="Reading theme">
           <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
           <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
@@ -264,38 +267,95 @@
         <button id="rMenu" class="r-btn" aria-label="Reading settings"><svg class="ico"><use href="#i-menu"/></svg></button>
       </div>
 
+      <div id="selBar" class="selbar" hidden>
+        <button class="hlc" data-c="y" aria-label="Highlight yellow"></button><button class="hlc" data-c="g" aria-label="Highlight green"></button><button class="hlc" data-c="b" aria-label="Highlight blue"></button><button class="hlc" data-c="p" aria-label="Highlight pink"></button>
+        <button id="selNote" class="selb" type="button">Note</button><button id="selCopy" class="selb" type="button">Copy</button>
+      </div>
+
+      <div id="ttsBar" class="ttsbar" hidden>
+        <span class="tts-label">🔊 Reading aloud</span>
+        <button id="ttsPause" class="selb" type="button">Pause</button>
+        <button id="ttsRate" class="selb" type="button">1×</button>
+        <button id="ttsStop" class="selb" type="button">Stop</button>
+      </div>
+
       <div id="rSheet" class="sheet" hidden>
         <div id="rSheetBg" class="sheet-bg"></div>
         <div class="sheet-card" role="dialog" aria-label="Reading settings">
           <div class="sheet-grab"></div>
-          <div class="srow"><span class="slabel">Theme</span>
-            <div class="themes" role="group" aria-label="Reading theme">
-              <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
-              <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
-              <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm light" aria-pressed="false"></button>
+
+          <div data-panel="main">
+            <div class="srow"><span class="slabel">Theme</span>
+              <div class="themes" role="group" aria-label="Reading theme">
+                <button class="tbtn" data-theme="light" aria-label="Normal (white)" title="Normal" aria-pressed="true"></button>
+                <button class="tbtn" data-theme="dark" aria-label="Dark mode" title="Dark" aria-pressed="false"></button>
+                <button class="tbtn" data-theme="warm" aria-label="Warm yellow light" title="Warm" aria-pressed="false"></button>
+              </div>
+            </div>
+            <div class="srow col"><span class="slabel">Brightness <b id="rBrightVal"></b></span><input id="rBright" type="range" min="25" max="100" value="100" aria-label="Brightness"></div>
+            <div class="srow txt" id="rTextRows"><span class="slabel">Text size</span>
+              <div class="stepper">
+                <button id="rFontDown" class="sbtn" aria-label="Smaller text"><span style="font-size:.85rem">A</span></button>
+                <b id="rFontVal">19</b>
+                <button id="rFontUp" class="sbtn" aria-label="Larger text"><span style="font-size:1.35rem">A</span></button>
+              </div>
+            </div>
+            <div class="srow txt" id="rFontRow"><span class="slabel">Font</span>
+              <select id="rFontSel" aria-label="Font">
+                <option value="serif">Serif</option><option value="palatino">Palatino</option><option value="sans">Sans-serif</option><option value="easy">Easy to read</option><option value="mono">Typewriter</option>
+              </select>
+            </div>
+            <div class="srow txt"><span class="slabel">Line spacing</span>
+              <div class="seg" role="group" aria-label="Line spacing"><button class="segb" data-lh="1.35" type="button">Tight</button><button class="segb" data-lh="1.55" type="button">Normal</button><button class="segb" data-lh="1.85" type="button">Roomy</button></div>
+            </div>
+            <div class="srow txt"><span class="slabel">Margins</span>
+              <div class="seg" role="group" aria-label="Margins"><button class="segb" data-px="12" type="button">Narrow</button><button class="segb" data-px="26" type="button">Normal</button><button class="segb" data-px="44" type="button">Wide</button></div>
+            </div>
+            <div class="srow"><span class="slabel">Page turn</span>
+              <div class="seg" role="group" aria-label="Page turn"><button class="segb" data-turn="curl" type="button">Curl</button><button class="segb" data-turn="slide" type="button">Slide</button><button class="segb" data-turn="none" type="button">None</button></div>
+            </div>
+            <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
+              <input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position">
+              <small id="rTimeLeft" class="timeleft"></small>
+            </div>
+            <div class="agrid">
+              <button id="rToc" class="btn secondary" type="button">Contents</button>
+              <button id="rSearchBtn" class="btn secondary txt" type="button">Search</button>
+              <button id="rMarksBtn" class="btn secondary" type="button">Bookmarks &amp; notes</button>
+              <button id="rTts" class="btn secondary txt" type="button">Read aloud</button>
+              <button id="rFull" class="btn secondary" type="button">Full screen</button>
             </div>
           </div>
-          <div class="srow" id="rTextRows"><span class="slabel">Text size</span>
-            <div class="stepper">
-              <button id="rFontDown" class="sbtn" aria-label="Smaller text"><span style="font-size:.85rem">A</span></button>
-              <b id="rFontVal">19</b>
-              <button id="rFontUp" class="sbtn" aria-label="Larger text"><span style="font-size:1.35rem">A</span></button>
-            </div>
+
+          <div data-panel="toc" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Contents</b></div>
+            <ul id="rTocList" class="toclist"></ul>
           </div>
-          <div class="srow" id="rFontRow"><span class="slabel">Font</span>
-            <div class="seg" role="group" aria-label="Font">
-              <button data-font="serif" class="segb" aria-pressed="true">Serif</button>
-              <button data-font="sans" class="segb" aria-pressed="false">Sans</button>
-            </div>
+
+          <div data-panel="search" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Search in book</b></div>
+            <input id="rSearchIn" class="search" type="search" placeholder="Search words or phrases" autocomplete="off">
+            <p id="rSearchInfo" class="muted small-note"></p>
+            <ul id="rSearchList" class="toclist"></ul>
           </div>
-          <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
-            <input id="rSeek" type="range" min="0" max="1000" value="0" aria-label="Jump to position">
+
+          <div data-panel="marks" hidden>
+            <div class="subhead"><button class="btn text back" data-back type="button">‹ Back</button><b>Bookmarks &amp; notes</b></div>
+            <div class="seg" role="group" aria-label="Show"><button class="segb" data-mtab="bm" aria-pressed="true" type="button">Bookmarks</button><button class="segb" data-mtab="hl" aria-pressed="false" type="button">Highlights &amp; notes</button></div>
+            <ul id="rMarksList" class="toclist marks"></ul>
+            <button id="rCopyNotes" class="btn secondary" type="button" hidden>Copy all highlights &amp; notes</button>
           </div>
-          <div class="srow btns">
-            <button id="rToc" class="btn secondary" type="button">Contents</button>
-            <button id="rFull" class="btn secondary" type="button">Full screen</button>
-          </div>
-          <ul id="rTocList" class="toclist" hidden></ul>
+        </div>
+      </div>
+
+      <div id="hlSheet" class="sheet" hidden>
+        <div id="hlBg" class="sheet-bg"></div>
+        <div class="sheet-card" role="dialog" aria-label="Highlight">
+          <div class="sheet-grab"></div>
+          <p id="hlText" class="hl-quote"></p>
+          <p id="hlNote" class="hl-note"></p>
+          <div class="srow"><span class="slabel">Colour</span><div class="hlcs"><button class="hlc" data-c="y" aria-label="Yellow"></button><button class="hlc" data-c="g" aria-label="Green"></button><button class="hlc" data-c="b" aria-label="Blue"></button><button class="hlc" data-c="p" aria-label="Pink"></button></div></div>
+          <div class="srow btns"><button id="hlEdit" class="btn secondary" type="button">Add / edit note</button><button id="hlDel" class="btn secondary danger" type="button">Delete highlight</button></div>
         </div>
       </div>
     </section>
@@ -351,7 +411,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <footer>v25</footer>
+  <footer>v26</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
