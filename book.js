@@ -221,7 +221,16 @@ export class Book {
     const overflows = (p) => p.scrollHeight > p.clientHeight + 1;
     let page = mk(), pageNo = 1; const tocRaw = [];
     const flush = () => { out.push(`<div class="page">${page.innerHTML}${dec(pageNo)}</div>`); pageNo++; page.remove(); page = mk(); };
+    let chapterNo = 0;
     for (const b of d.blocks) {
+      if (b.t === 'img') { // picture block (e.g. chapter number); a chapter opener always starts a fresh page
+        if (b.opener) { if (page.childElementCount) flush(); tocRaw.push({ level: 1, title: b.title || `Chapter ${++chapterNo}`, page: out.length }); }
+        const node = document.createElement('div'); node.className = 'blk-img' + (b.opener ? ' opener' : '');
+        node.innerHTML = `<img src="${this._url(b.blob)}" alt="" style="width:${Math.max(8, Math.round((b.wf || 0.5) * 100))}%;aspect-ratio:${b.pw || 1}/${b.ph || 1}">`;
+        page.appendChild(node);
+        if (overflows(page) && page.childElementCount > 1) { page.removeChild(node); flush(); page.appendChild(node); }
+        continue;
+      }
       if (b.t === 'h1' && page.childElementCount) flush();
       if (b.t === 'h1' || b.t === 'h2') tocRaw.push({ level: b.t === 'h1' ? 1 : 2, title: b.text.slice(0, 90), page: out.length });
       let words = b.t === 'p' ? b.text.split(' ') : null;
@@ -229,6 +238,7 @@ export class Book {
       let first = true;
       while (true) {
         const node = document.createElement(tag);
+        if (b.align === 'center') node.classList.add('center');
         node.textContent = words ? words.join(' ') : b.text;
         page.appendChild(node);
         if (!overflows(page)) break;
@@ -244,11 +254,11 @@ export class Book {
           if (overflows(page)) hi = mid - 1; else lo = mid;
         }
         if (lo === 0) { page.removeChild(node); if (page.childElementCount) { flush(); continue; } words = words.slice(1); continue; }
-        node.textContent = words.slice(0, lo).join(' '); if (!first) node.className = 'first';
+        node.textContent = words.slice(0, lo).join(' '); if (!first) node.classList.add('first');
         words = words.slice(lo); first = false; flush();
         if (!words.length) break;
       }
-      if (words && !first) { const last = page.lastElementChild; if (last) last.className = 'first'; }
+      if (words && !first) { const last = page.lastElementChild; if (last) last.classList.add('first'); }
     }
     if (page.childElementCount) flush();
     m.innerHTML = '';

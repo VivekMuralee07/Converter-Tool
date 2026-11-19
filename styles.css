@@ -314,3 +314,10 @@ body.reading .book.spread::before { display: none; }
 .r-top .tbtn[data-theme=light] { background: #ffffff; } .r-top .tbtn[data-theme=dark] { background: #000; } .r-top .tbtn[data-theme=warm] { background: #f2cf80; }
 .r-top .r-btn { margin-left: 0; }
 #stepReader.chrome-hidden .themes.quick { pointer-events: none; }
+
+/* pictures inside reflowable books (chapter numbers etc.) and centred lines */
+.page .blk-img { text-align: center; margin: .5em 0; text-indent: 0; }
+.page .blk-img img { display: inline-block; max-width: 100%; height: auto; mix-blend-mode: multiply; }
+.page .blk-img.opener { margin: 1.4em 0 1.2em; }
+.page p.center, body.reading .page p.center { text-align: center; text-indent: 0; }
+body[data-theme=dark] #stepReader .blk-img img { mix-blend-mode: normal; filter: invert(.92) hue-rotate(180deg); }

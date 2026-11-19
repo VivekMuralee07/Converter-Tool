@@ -155,8 +155,57 @@ function makeStripper(aspect, Wc, emit) {
   };
 }
 
+
+/* ---------- pictures (e.g. decorative chapter numbers) ---------- */
+const comp = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+
+export async function imageBoxes(page) {
+  if (page.rotate) return [];
+  const OPS = pdfjsLib.OPS, [vx0, vy0, vx1, vy1] = page.view, W = vx1 - vx0, H = vy1 - vy0;
+  const ol = await page.getOperatorList();
+  let m = [1, 0, 0, 1, 0, 0]; const stack = [], out = [];
+  for (let i = 0; i < ol.fnArray.length; i++) {
+    const fn = ol.fnArray[i], a = ol.argsArray[i];
+    if (fn === OPS.save) stack.push(m);
+    else if (fn === OPS.restore) m = stack.pop() || m;
+    else if (fn === OPS.transform) m = comp(m, a);
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push(m); if (a && a[0]) m = comp(m, a[0]); }
+    else if (fn === OPS.paintFormXObjectEnd) m = stack.pop() || m;
+    else if (fn === OPS.paintImageXObject || fn === OPS.paintInlineImageXObject || fn === OPS.paintImageMaskXObject || fn === OPS.paintJpegXObject) {
+      const xs = [], ys = [];
+      for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { xs.push(m[0] * u + m[2] * v + m[4]); ys.push(m[1] * u + m[3] * v + m[5]); }
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), w = x1 - x0, h = y1 - y0;
+      if (w < 22 || h < 22) continue;                                   // rules, bullets, specks
+      if (w > W * 0.9 && h > H * 0.55) continue;                        // full-page picture (scan/background)
+      if (x1 < vx0 || x0 > vx1 || y1 < vy0 || y0 > vy1) continue;      // off the page
+      if (out.some((o) => Math.abs(o.x0 - x0) < 2 && Math.abs(o.y1 - y1) < 2 && Math.abs(o.w - w) < 2)) continue; // drawn twice
+      out.push({ x0, x1, y0, y1, w, h, pageW: W, pageH: H });
+    }
+  }
+  return out;
+}
+
+// Crops the listed boxes out of one rendering of the page (opaque PNG/JPEG, so the picture looks exactly like the PDF).
+export async function cropImages(page, boxes, scale = 2.5) {
+  const vp = page.getViewport({ scale }), [vx0, , , vy1] = page.view;
+  const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: ctx, viewport: vp }).promise;
+  for (const b of boxes) {
+    const sx = Math.max(0, Math.floor((b.x0 - vx0) * scale)), sy = Math.max(0, Math.floor((vy1 - b.y1) * scale));
+    const sw = Math.min(c.width - sx, Math.ceil(b.w * scale)), sh = Math.min(c.height - sy, Math.ceil(b.h * scale));
+    if (sw < 4 || sh < 4) continue;
+    const o = document.createElement('canvas'); o.width = sw; o.height = sh; o.getContext('2d').drawImage(c, sx, sy, sw, sh, 0, 0, sw, sh);
+    const big = sw * sh > 700000;
+    b.blob = await new Promise((r) => o.toBlob(r, big ? 'image/jpeg' : 'image/png', 0.88)); b.pw = sw; b.ph = sh; b.mime = big ? 'image/jpeg' : 'image/png';
+    o.width = o.height = 0;
+  }
+  c.width = c.height = 0;
+  return boxes.filter((b) => b.blob);
+}
+
 /* ---------- text extraction ---------- */
-async function extractLines(page) {
+export async function extractLines(page) {
   const vp = page.getViewport({ scale: 1 });
   const tc = await page.getTextContent();
   const items = tc.items
@@ -166,8 +215,8 @@ async function extractLines(page) {
   const lines = [];
   for (const it of items) {
     const last = lines[lines.length - 1];
-    if (last && Math.abs(last.y - it.y) < Math.max(it.size, last.size) * 0.7) last.items.push(it);
-    else lines.push({ y: it.y, items: [it] });
+    if (last && Math.abs(last.y - it.y) < Math.max(it.size, last.size) * 0.55) { last.items.push(it); last.size = Math.max(last.size, it.size); }
+    else lines.push({ y: it.y, size: it.size, items: [it] });
   }
   return lines.map((l) => {
     l.items.sort((a, b) => a.x - b.x);
@@ -183,19 +232,27 @@ async function extractLines(page) {
   }).filter((l) => l.text);
 }
 
-function stripHeadersFooters(pagesLines) {
-  const norm = (t) => t.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ');
+export function stripHeadersFooters(pagesLines) {
+  const norm = (t) => t.toLowerCase().replace(/\d+/g, '#').replace(/[^\p{L}#]+/gu, ' ').trim();
+  const DOMAIN = /\b[a-z0-9-]{3,}\.(com|net|org|io|co|in|me|ru|info|to)\b/i; // site watermarks such as "OceanofPDF.com"
   const edge = (l) => l.y > l.pageH * 0.92 || l.y < l.pageH * 0.07;
+  const nearEdge = (l) => l.y > l.pageH * 0.84 || l.y < l.pageH * 0.14;
   const counts = new Map();
   for (const lines of pagesLines) {
     const seen = new Set();
-    for (const l of lines) if (edge(l)) { const k = norm(l.text); if (!seen.has(k)) { seen.add(k); counts.set(k, (counts.get(k) || 0) + 1); } }
+    for (const l of lines) if (l.text.length <= 60) { const k = norm(l.text); if (k && !seen.has(k)) { seen.add(k); counts.set(k, (counts.get(k) || 0) + 1); } }
   }
-  const min = Math.max(3, pagesLines.length * 0.4);
-  return pagesLines.map((lines) => lines.filter((l) => !(edge(l) && (/^\W*\d+\W*$/.test(l.text) || counts.get(norm(l.text)) >= min))));
+  const n = pagesLines.length, min = Math.max(3, n * 0.4);
+  return pagesLines.map((lines) => lines.filter((l) => {
+    const c = counts.get(norm(l.text)) || 0;
+    if (edge(l) && (/^\W*\d+\W*$/.test(l.text) || c >= min)) return false;
+    if (DOMAIN.test(l.text) && l.text.length <= 60 && c >= Math.min(3, n)) return false; // watermark anywhere on the page
+    if (nearEdge(l) && l.text.length <= 50 && c >= Math.max(4, n * 0.5)) return false;     // repeated running header/footer
+    return true;
+  }));
 }
 
-function buildBlocks(pagesLines) {
+export function buildBlocks(pagesLines, pagesImgs = []) {
   const all = pagesLines.flat();
   const sizeW = {};
   for (const l of all) sizeW[l.size] = (sizeW[l.size] || 0) + l.text.length;
@@ -203,22 +260,37 @@ function buildBlocks(pagesLines) {
   const xs = {};
   for (const l of all) { const k = Math.round(l.x / 2) * 2; xs[k] = (xs[k] || 0) + 1; }
   const left = +(Object.entries(xs).sort((a, b) => b[1] - a[1])[0] || [0])[0];
+  const widths = all.map((l) => l.right - l.x).sort((a, b) => a - b), bodyW = widths[Math.floor(widths.length * 0.9)] || 1; // typical full line width
 
   const blocks = [];
   const endsSentence = /[.!?:"”’)\]]$/;
   pagesLines.forEach((lines, pi) => {
     const maxW = Math.max(1, ...lines.map((l) => l.right - l.x));
+    // text lines and pictures in reading order (top to bottom)
+    const items = [...lines.map((l) => ({ y: l.y, l })), ...(pagesImgs[pi] || []).map((im) => ({ y: im.y1, im }))].sort((a, b) => b.y - a.y);
     let prev = null;
-    for (const l of lines) {
+    items.forEach((it, idx) => {
+      if (it.im) {
+        const im = it.im;
+        const opener = idx === 0 && lines.length >= 3 && im.w <= im.pageW * 0.55 && im.h <= im.pageH * 0.3; // picture that starts the page = chapter opener
+        blocks.push({ t: 'img', blob: im.blob, mime: im.mime, pw: im.pw, ph: im.ph, wf: Math.min(1, im.w / im.pageW), opener, page: pi });
+        prev = null; return;
+      }
+      const l = it.l;
       const level = l.size >= body * 1.5 ? 1 : l.size >= body * 1.15 ? 2 : 0;
       const isHead = level && l.text.length < 140;
       const last = blocks[blocks.length - 1];
       if (isHead) {
         if (last && last.t === 'h' + level && prev && last.page === pi) last.text += ' ' + l.text;
         else blocks.push({ t: 'h' + level, text: l.text, page: pi });
-        prev = null; continue;
+        prev = null; return;
       }
-      let startNew = !last || last.t[0] === 'h';
+      // centred lines (titles, dedications, verse) stay centred, one block per line
+      // (only clearly short lines: justified full-width lines measure a little narrow and must not count as centred)
+      if (Math.abs((l.x + l.right) / 2 - l.pageW / 2) < l.pageW * 0.025 && l.right - l.x < bodyW * 0.62 && l.x - left > l.size * 1.5) {
+        blocks.push({ t: 'p', text: l.text, align: 'center', page: pi }); prev = null; return;
+      }
+      let startNew = !last || last.t[0] === 'h' || last.t === 'img' || last.align === 'center';
       if (!startNew && prev) {
         const gap = prev.y - l.y;
         const frag = l.text.length <= 4 || prev.text.length <= 4; // math symbols, bullets, stray glyphs
@@ -234,16 +306,21 @@ function buildBlocks(pagesLines) {
       else if (/[-‐]$/.test(last.text) && /^[a-z]/.test(l.text)) last.text = last.text.slice(0, -1) + l.text;
       else last.text += ' ' + l.text;
       prev = l;
-    }
-    if (blocks.length && blocks[blocks.length - 1].page === pi) {/* keep order */}
+    });
   });
   return blocks;
 }
 
 function chunkChapters(blocks, pageCount, title, offset = 0) {
-  const h1s = blocks.filter((b) => b.t === 'h1').length;
+  const h1s = blocks.filter((b) => b.t === 'h1').length, openers = blocks.filter((b) => b.t === 'img' && b.opener).length;
   const chapters = [];
-  if (h1s >= 2) {
+  if (h1s < 2 && openers >= 2) { // novels whose chapter numbers are pictures
+    let cur = null, k = 0;
+    for (const b of blocks) {
+      if (b.t === 'img' && b.opener) { b.title = `Chapter ${++k}`; cur = { title: b.title, blocks: [b] }; chapters.push(cur); }
+      else { if (!cur) { cur = { title: 'Front matter', blocks: [] }; chapters.push(cur); } cur.blocks.push(b); }
+    }
+  } else if (h1s >= 2) {
     let cur = null;
     for (const b of blocks) {
       if (b.t === 'h1') { cur = { title: b.text, blocks: [b] }; chapters.push(cur); }
@@ -267,7 +344,7 @@ const XHTML = (title, body, extra = '') => `<?xml version="1.0" encoding="utf-8"
 <body${body.startsWith('<div class="fx"') ? ' class="fxb"' : ''}>${body}</body></html>`;
 
 const CSS = `body{font-family:serif;line-height:1.5;margin:0 .6em}h1{font-size:1.6em;margin:1.2em 0 .6em}h2{font-size:1.25em;margin:1em 0 .4em}
-p{margin:0 0 .8em;text-align:justify}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
+p{margin:0 0 .8em;text-align:justify}.center{text-align:center}.fig{text-align:center;margin:1em 0}.fig img{max-width:100%;height:auto}.fig.chap{margin:2.5em 0 1.5em}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
 html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff}
 .fx img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}`;
 
@@ -350,22 +427,47 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
     }
     if (!result.pageImages.length) { add(cover, 'Page 1', 'Page 1'); }
   } else {
-    const raw = [];
+    const raw = [], boxes = [];
     for (let i = first; i <= last; i++) {
-      onProgress((i - first + 1) / n * 0.8, `Reading page ${i} of ${last}`);
-      raw.push(await extractLines(await pdf.getPage(i)));
+      onProgress((i - first + 1) / n * 0.7, `Reading page ${i} of ${last}`);
+      const pg = await pdf.getPage(i);
+      raw.push(await extractLines(pg));
+      boxes.push(await imageBoxes(pg).catch(() => []));
       await sleep0();
     }
+    // keep pictures only for text-style books; a PDF with pictures on most pages is illustrated/scanned (use Fixed pages)
+    const withImg = boxes.filter((b) => b.length).length;
+    const useImgs = withImg > 0 && withImg <= Math.max(3, n * 0.5);
+    const pagesImgs = boxes.map(() => []);
+    if (useImgs) {
+      let done = 0, total = Math.min(withImg, 250);
+      for (let k = 0; k < boxes.length && done < total; k++) {
+        if (!boxes[k].length) continue;
+        onProgress(0.7 + 0.12 * done / total, `Saving pictures (${++done} of ${total})`);
+        pagesImgs[k] = await cropImages(await pdf.getPage(first + k), boxes[k].slice(0, 6)).catch(() => []);
+        await sleep0();
+      }
+    }
     onProgress(0.85, 'Building chapters…');
-    const blocks = buildBlocks(stripHeadersFooters(raw));
+    const blocks = buildBlocks(stripHeadersFooters(raw), pagesImgs);
     result.blocks = blocks;
-    result.hasText = blocks.length > 0;
+    result.hasText = blocks.some((b) => b.t !== 'img');
     const flat = raw.flat();
     result.messy = flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
     const chapters = chunkChapters(blocks, n, title, first - 1);
+    let imgN = 0;
     chapters.forEach((c, i) => {
       const name = `c${String(i + 1).padStart(3, '0')}`;
-      const body = c.blocks.map((b) => (b.t === 'p' ? `<p>${esc(b.text)}</p>` : `<${b.t}>${esc(b.text)}</${b.t}>`)).join('\n');
+      const body = c.blocks.map((b) => {
+        if (b.t === 'img') {
+          const f = `images/img${++imgN}.${b.mime === 'image/jpeg' ? 'jpg' : 'png'}`;
+          zip.file(`OEBPS/${f}`, b.blob);
+          manifest += `<item id="img${imgN}" href="${f}" media-type="${b.mime}"/>`;
+          return `<div class="fig${b.opener ? ' chap' : ''}"><img src="${f}" alt="${esc(b.title || '')}" style="width:${Math.max(8, Math.round(b.wf * 100))}%"/></div>`;
+        }
+        if (b.t === 'p') return `<p${b.align === 'center' ? ' class="center"' : ''}>${esc(b.text)}</p>`;
+        return `<${b.t}>${esc(b.text)}</${b.t}>`;
+      }).join('\n');
       zip.file(`OEBPS/${name}.xhtml`, XHTML(c.title, body));
       manifest += `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"/>`;
       spine += `<itemref idref="${name}"/>`;
