@@ -53,15 +53,26 @@ export async function parseEpub(blob) {
   }
   result.blocks = [];
   const SEL = 'h1,h2,h3,h4,h5,h6,p,li,blockquote,pre';
+  let imgBudget = 80 * 1048576, chapterNo = 0;
   for (const d of docs) {
-    d.body.querySelectorAll(SEL).forEach((el) => {
-      if (el.parentElement && el.parentElement.closest(SEL)) return; // nested: parent already covers it
+    for (const el of d.body.querySelectorAll(SEL + ',img')) {
+      if (el.tagName.toLowerCase() === 'img') {
+        if (el.closest(SEL) || imgBudget <= 0) continue; // images inside text blocks are skipped
+        const src = el.getAttribute('src'), path = src && !/^(data:|https?:)/i.test(src) ? resolve(d.item.href, src) : null, blob = path ? await fileBlob(path) : null;
+        if (!blob || blob.size > 4 * 1048576) continue;
+        let pw = 0, ph = 0; try { const bmp = await createImageBitmap(blob); pw = bmp.width; ph = bmp.height; bmp.close(); } catch { continue; }
+        imgBudget -= blob.size;
+        const m = /width:\s*([\d.]+)%/.exec(el.getAttribute('style') || ''), opener = !!el.closest('.chap');
+        result.blocks.push({ t: 'img', blob, mime: blob.type, pw, ph, wf: m ? Math.min(1, +m[1] / 100) : Math.min(1, pw / 600), opener, title: opener ? (el.getAttribute('alt') || `Chapter ${++chapterNo}`) : '' });
+        continue;
+      }
+      if (el.parentElement && el.parentElement.closest(SEL)) continue; // nested: parent already covers it
       const t = el.textContent.replace(/\s+/g, ' ').trim();
-      if (!t) return;
+      if (!t) continue;
       const tag = el.tagName.toLowerCase();
-      result.blocks.push({ t: tag === 'h1' ? 'h1' : /^h[2-6]$/.test(tag) ? 'h2' : 'p', text: t });
-    });
+      result.blocks.push({ t: tag === 'h1' ? 'h1' : /^h[2-6]$/.test(tag) ? 'h2' : 'p', text: t, align: el.classList.contains('center') ? 'center' : undefined });
+    }
   }
-  if (!result.blocks.length) throw new Error('No readable text found in this EPUB.');
+  if (!result.blocks.some((b) => b.t !== 'img')) throw new Error('No readable text found in this EPUB.');
   return result;
 }
