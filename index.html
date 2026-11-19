@@ -173,6 +173,23 @@
         </label>
       </fieldset>
 
+      <div id="scanHint" class="notice" hidden>🔍 <span>This PDF looks <b>scanned</b> (no text found), so OCR has been switched on below.</span></div>
+
+      <div id="reflowRow" class="fitbox">
+        <label class="switch">
+          <span class="switch-text"><b>Keep formulas and tables as pictures</b><small>Display equations and tables stay exactly as in the PDF, inside your resizable text.</small></span>
+          <input type="checkbox" id="keepMath" checked><span class="track"></span>
+        </label>
+        <label class="switch" style="margin-top:14px">
+          <span class="switch-text"><b>Scanned book: read the text (OCR)</b><small>Turns page pictures into real, resizable text. Takes a few seconds per page.</small></span>
+          <input type="checkbox" id="ocr"><span class="track"></span>
+        </label>
+        <div id="ocrLangBox" hidden>
+          <label class="field" style="margin-top:12px"><span>Language of the book</span><select id="ocrLang"></select></label>
+          <p class="hint-line" id="ocrLangNote" style="margin:6px 0 0"></p>
+        </div>
+      </div>
+
       <div id="fitRow" class="fitbox" hidden>
         <label class="switch">
           <span class="switch-text"><b>Fit to this screen</b><small>Trims margins and cuts pages to your screen shape. Recommended on phones.</small></span>
@@ -197,10 +214,12 @@
         <label class="field"><span>From page</span><input id="from" type="number" min="1" inputmode="numeric" placeholder="1"></label>
         <label class="field"><span>To page</span><input id="to" type="number" min="1" inputmode="numeric" placeholder="all"></label>
       </div>
+      <button id="pickPages" class="btn secondary block" type="button" style="margin-bottom:10px">Choose pages from thumbnails</button>
       <p id="rangeHint" class="hint-line">Tip: for big books convert one chapter at a time &mdash; it is faster and the files stay small.</p>
 
       <div class="actions">
         <button id="convertBtn" class="btn primary lg block"><svg class="ico"><use href="#i-wand"/></svg>Convert to EPUB</button>
+        <button id="previewBtn" class="btn secondary block" type="button">Preview first 10 pages</button>
         <button id="resetBtn1" class="btn text block">Choose another file</button>
       </div>
     </section>
@@ -211,10 +230,15 @@
       <h2>Converting your book…</h2>
       <div class="bar"><i id="barFill"></i></div>
       <p id="status" class="muted">Starting…</p>
+      <p class="hint-line">Keep this screen open until it finishes. Your phone is kept awake while converting.</p>
     </section>
 
     <!-- ============ Result ============ -->
     <section id="stepResult" hidden>
+      <div id="previewBanner" class="notice big" hidden>
+        <div>👀 <b>Preview</b> — only <span id="pvRange"></span> were converted, so you can check the layout.</div>
+        <div class="actions row"><button id="pvFull" class="btn primary" type="button">Convert the whole book</button><button id="pvBack" class="btn text" type="button">Change settings</button></div>
+      </div>
       <div class="panel result-head">
         <div class="done">
           <span class="done-ico"><svg class="ico big"><use href="#i-check"/></svg></span>
@@ -409,9 +433,20 @@
     </div>
   </div>
 
+  <div id="pageSheet" class="sheet app" hidden>
+    <div id="pageBg" class="sheet-bg"></div>
+    <div class="sheet-card tall" role="dialog" aria-label="Choose pages">
+      <div class="sheet-grab"></div>
+      <div class="subhead"><b>Choose pages</b></div>
+      <p id="pgHint" class="muted small-note">Tap the first page, then tap the last page.</p>
+      <div id="pgGrid" class="pggrid"></div>
+      <div class="actions row pgbar"><button id="pgUse" class="btn primary lg" type="button" disabled>Use selection</button><button id="pgAll" class="btn text lg" type="button">All pages</button></div>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <footer>v26</footer>
+  <footer>v27</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>

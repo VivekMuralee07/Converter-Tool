@@ -64,8 +64,8 @@ export async function parseEpub(blob) {
         if (!blob || blob.size > 4 * 1048576) continue;
         let pw = 0, ph = 0; try { const bmp = await createImageBitmap(blob); pw = bmp.width; ph = bmp.height; bmp.close(); } catch { continue; }
         imgBudget -= blob.size;
-        const m = /width:\s*([\d.]+)%/.exec(el.getAttribute('style') || ''), opener = !!el.closest('.chap');
-        result.blocks.push({ t: 'img', blob, mime: blob.type, pw, ph, wf: m ? Math.min(1, +m[1] / 100) : Math.min(1, pw / 600), opener, title: opener ? (el.getAttribute('alt') || `Chapter ${++chapterNo}`) : '' });
+        const m = /width:\s*([\d.]+)(%|em)/.exec(el.getAttribute('style') || ''), opener = !!el.closest('.chap'), region = !!el.closest('.eq');
+        result.blocks.push({ t: 'img', blob, mime: blob.type, pw, ph, wf: m && m[2] === '%' ? Math.min(1, +m[1] / 100) : Math.min(1, pw / 600), em: m && m[2] === 'em' ? +m[1] : undefined, region, opener, title: opener ? (el.getAttribute('alt') || `Chapter ${++chapterNo}`) : '' });
         continue;
       }
       if (el.parentElement && el.parentElement.closest(SEL)) continue; // nested: parent already covers it

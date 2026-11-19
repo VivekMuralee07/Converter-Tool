@@ -233,7 +233,7 @@ export class Book {
       if (b.t === 'img') { // picture block (e.g. chapter number); a chapter opener always starts a fresh page
         if (b.opener) { if (page.childElementCount) flush(); tocRaw.push({ level: 1, title: b.title || `Chapter ${++chapterNo}`, page: out.length }); }
         const node = document.createElement('div'); node.className = 'blk-img' + (b.opener ? ' opener' : '');
-        node.innerHTML = `<img src="${this._url(b.blob)}" alt="" style="width:${Math.max(8, Math.round((b.wf || 0.5) * 100))}%;aspect-ratio:${b.pw || 1}/${b.ph || 1}">`;
+        node.innerHTML = `<img src="${this._url(b.blob)}" alt="" style="width:${b.em ? b.em.toFixed(2) + 'em' : Math.max(8, Math.round((b.wf || 0.5) * 100)) + '%'};max-width:100%;aspect-ratio:${b.pw || 1}/${b.ph || 1}">`;
         page.appendChild(node);
         if (overflows(page) && page.childElementCount > 1) { page.removeChild(node); flush(); page.appendChild(node); }
         this.chunks.push({ b: bi, o: 0, len: 0, page: out.length });

@@ -1,4 +1,4 @@
-import { convert } from './converter.js';
+import { convert, OCR_LANGS } from './converter.js';
 import { Book } from './book.js';
 import { parseEpub, parseAny, kindOf } from './reader.js';
 import { initHub } from './hub.js';
@@ -19,38 +19,50 @@ const show = (id) => {
 
 let file = null, book = null, downloadUrl = null, totalPages = 0, readerBook = null, lastResult = null, backTo = 'stepLibrary';
 
+let pickedPdf = null;
+const closePicked = () => { if (pickedPdf) { pickedPdf.destroy().catch(() => {}); pickedPdf = null; } };
+$('ocrLang').innerHTML = Object.entries(OCR_LANGS).map(([k, v]) => `<option value="${k}">${v}${k === 'eng' ? ' (works offline)' : ''}</option>`).join('');
+
 async function pick(f) {
   if (!f) return;
   if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { alert('Please choose a PDF file.'); return; }
-  file = f;
+  file = f; closePicked();
   $('fileName').textContent = f.name;
   const guess = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
   $('title').value = guess;
-  $('author').value = ''; $('from').value = ''; $('to').value = ''; syncFit();
+  $('author').value = ''; $('from').value = ''; $('to').value = ''; $('ocr').checked = false; $('scanHint').hidden = true; $('pickPages').hidden = true; syncFit();
   show('stepOptions');
-  try { // prefill from PDF metadata
+  try { // prefill from PDF metadata and look for a text layer
     const { openPdf } = await import('./converter.js');
     const { meta, pdf } = await openPdf(f);
+    if (file !== f) { pdf.destroy(); return; }
+    pickedPdf = pdf;
     // only fill from the PDF if the user hasn't typed something in the meantime, and this is still the same file
-    if (file === f && meta.Title && meta.Title.trim() && $('title').value === guess) $('title').value = meta.Title.trim();
-    if (file === f && meta.Author && !$('author').value) $('author').value = meta.Author.trim();
-    totalPages = pdf.numPages; $('to').placeholder = totalPages; $('rangeHint').textContent = `This PDF has ${totalPages} pages. Tip: for big books convert one chapter at a time — it is faster and the files stay small.`;
-    pdf.destroy();
+    if (meta.Title && meta.Title.trim() && $('title').value === guess) $('title').value = meta.Title.trim();
+    if (meta.Author && !$('author').value) $('author').value = meta.Author.trim();
+    totalPages = pdf.numPages; $('to').placeholder = totalPages; $('pickPages').hidden = false;
+    $('rangeHint').textContent = `This PDF has ${totalPages} pages. Tip: for big books convert one chapter at a time — it is faster and the files stay small.`;
+    let chars = 0; const sample = Math.min(5, totalPages);
+    for (let i = 0; i < sample; i++) { const pg = await pdf.getPage(1 + Math.floor(i * totalPages / sample)); chars += (await pg.getTextContent()).items.reduce((t, x) => t + x.str.length, 0); }
+    if (file === f && chars < 25 * sample) { $('scanHint').hidden = false; $('ocr').checked = true; syncFit(); } // no text layer: it is a scan
   } catch { /* metadata is optional */ }
 }
 
 function reset() {
   if (book) { book.destroy(); book = null; }
   if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = null; }
-  file = null; $('file').value = ''; show('stepPick');
+  file = null; closePicked(); $('file').value = ''; show('stepPick');
 }
 
-async function run() {
+async function run(quick = false) {
   show('stepProgress');
+  let wake = null; try { wake = await navigator.wakeLock?.request('screen'); } catch { /* not allowed */ }
   const opts = { title: $('title').value.trim() || 'Untitled', author: $('author').value.trim(), mode: document.querySelector('input[name=mode]:checked').value };
   opts.fit = opts.mode === 'fixed' && $('fit').checked;
   opts.zoom = parseFloat($('zoom').value) || 1.5;
   opts.from = parseInt($('from').value, 10) || 1; opts.to = parseInt($('to').value, 10) || 0;
+  opts.keepMath = $('keepMath').checked; opts.ocr = opts.mode === 'reflow' && $('ocr').checked ? $('ocrLang').value : null;
+  if (quick) opts.to = Math.min(totalPages || 9999, opts.from + 9);
   const sw = Math.min(screen.width, screen.height), sh = Math.max(screen.width, screen.height);
   // readers add side margins and top/bottom bars, so the usable area is narrower and shorter than the screen
   opts.aspect = Math.max(0.3, Math.min(0.75, (sw / sh) * parseFloat($('margins').value)));
@@ -69,7 +81,9 @@ async function run() {
     $('fname').oninput = () => { $('downloadBtn').download = safeName($('fname').value) + '.epub'; };
     $('fname').onchange = async () => { const n = $('fname').value.trim(); if (n) { await renameBook(res.id, n).catch(() => {}); $('resultTitle').textContent = `“${n}” is ready`; } };
     lastResult = res; res.id = bookId(opts.title, res.epub);
-    saveBook({ id: res.id, kind: 'epub', title: opts.title, author: opts.author, size: res.epub.size, added: Date.now(), opened: Date.now(), progress: 0, blob: res.epub, cover: res.coverBlob }).catch(() => {});
+    if (!quick) saveBook({ id: res.id, kind: 'epub', title: opts.title, author: opts.author, size: res.epub.size, added: Date.now(), opened: Date.now(), progress: 0, blob: res.epub, cover: res.coverBlob }).catch(() => {});
+    $('previewBanner').hidden = !quick; if (quick) $('pvRange').textContent = `pages ${opts.from}–${opts.to}`;
+    if (res.ocrPages) $('resultInfo').textContent += ` · ${res.ocrPages} page${res.ocrPages > 1 ? 's' : ''} read with OCR`;
     show('stepResult');
     book = new Book($('stage'), $('book'), (s) => {
       $('pageInfo').textContent = s.label; $('prevBtn').disabled = !s.canPrev; $('nextBtn').disabled = !s.canNext;
@@ -79,20 +93,25 @@ async function run() {
     console.error(err);
     alert('Conversion failed: ' + (err && err.message || err));
     show('stepOptions');
-  }
+  } finally { if (wake) wake.release().catch(() => {}); }
 }
 
-$('file').addEventListener('change', (e) => pick(e.target.files[0]));
+$('file').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; pick(f); }); // cleared so the same file can be chosen again
 const drop = $('drop');
 ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
 drop.addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
 drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
-function syncFit() { $('fitRow').hidden = document.querySelector('input[name=mode]:checked').value !== 'fixed'; $('zoom').disabled = $('margins').disabled = !$('fit').checked; }
+function syncFit() { const fixed = document.querySelector('input[name=mode]:checked').value === 'fixed'; $('reflowRow').hidden = fixed; $('ocrLangBox').hidden = fixed || !$('ocr').checked; $('fitRow').hidden = !fixed; $('zoom').disabled = $('margins').disabled = !$('fit').checked; }
 $('fit').addEventListener('change', syncFit);
+$('ocr').addEventListener('change', syncFit);
+$('ocrLang').addEventListener('change', () => { $('ocrLangNote').textContent = $('ocrLang').value === 'eng' ? '' : 'This language is downloaded the first time (needs internet), then reused.'; });
 document.querySelectorAll('input[name=mode]').forEach((r) => r.addEventListener('change', syncFit));
 $('fit').checked = innerWidth < 820;
-$('convertBtn').onclick = run;
+$('convertBtn').onclick = () => run(false);
+$('previewBtn').onclick = () => run(true);
+$('pvFull').onclick = () => run(false);
+$('pvBack').onclick = () => show('stepOptions');
 $('resetBtn1').onclick = $('resetBtn2').onclick = reset;
 $('prevBtn').onclick = () => book && book.prev();
 $('nextBtn').onclick = () => book && book.next();
@@ -521,3 +540,33 @@ $('libBtn').onclick = () => show('stepLibrary');
 initHub({ show });
 // start on the Library when there are books, otherwise on Convert
 listBooks().then((b) => show(b.length ? 'stepLibrary' : 'stepPick')).catch(() => show('stepPick'));
+
+/* ----- choose pages from thumbnails ----- */
+function openPicker() {
+  if (!pickedPdf) return;
+  const n = pickedPdf.numPages, grid = $('pgGrid'); grid.innerHTML = '';
+  let a = parseInt($('from').value, 10) || null, b = parseInt($('to').value, 10) || null; if (a && !b) b = a;
+  const cells = [];
+  const paint = () => {
+    cells.forEach((c, i) => c.classList.toggle('sel', a !== null && i + 1 >= a && i + 1 <= (b ?? a)));
+    $('pgHint').textContent = a === null ? 'Tap the first page, then tap the last page.' : b === null ? `Page ${a} selected — now tap the last page.` : `Pages ${a}–${b} selected (${b - a + 1}).`;
+    $('pgUse').disabled = a === null;
+  };
+  let queue = Promise.resolve(); const done = new Set();
+  const io = new IntersectionObserver((es) => es.forEach((en) => {
+    if (!en.isIntersecting) return; const i = +en.target.dataset.p; if (done.has(i)) return; done.add(i); io.unobserve(en.target);
+    queue = queue.then(async () => { try { const pg = await pickedPdf.getPage(i), vp = pg.getViewport({ scale: 1 }), sc = 120 / vp.width, v = pg.getViewport({ scale: sc }), cv = en.target.querySelector('canvas'); cv.width = Math.ceil(v.width); cv.height = Math.ceil(v.height); await pg.render({ canvasContext: cv.getContext('2d'), viewport: v }).promise; } catch { /* closed */ } });
+  }), { root: grid, rootMargin: '300px' });
+  pickedPdf.getPage(1).then((pg) => { const v = pg.getViewport({ scale: 1 }); grid.style.setProperty('--ar', (v.width / v.height).toFixed(3)); });
+  for (let i = 1; i <= n; i++) {
+    const c = document.createElement('div'); c.className = 'pgc'; c.dataset.p = i; c.innerHTML = `<canvas width="10" height="14"></canvas><span>${i}</span>`;
+    c.onclick = () => { if (a === null || b !== null) { a = i; b = null; } else { b = i; if (b < a) [a, b] = [b, a]; } paint(); };
+    grid.appendChild(c); cells.push(c); io.observe(c);
+  }
+  $('pgUse').onclick = () => { $('from').value = a; $('to').value = b ?? a; closePicker(); };
+  $('pgAll').onclick = () => { $('from').value = ''; $('to').value = ''; closePicker(); };
+  window._pgIo = io; paint(); $('pageSheet').hidden = false;
+  if (a) setTimeout(() => cells[a - 1] && cells[a - 1].scrollIntoView({ block: 'center' }), 50);
+}
+function closePicker() { $('pageSheet').hidden = true; if (window._pgIo) window._pgIo.disconnect(); }
+$('pickPages').onclick = openPicker; $('pageBg').onclick = closePicker;
