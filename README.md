@@ -40,6 +40,24 @@ Netlify / Vercel / Cloudflare Pages work too (just publish the repo root).
    On `username.github.io/Converter-Tool/` it can’t be (subpath), so use a `username.github.io` root repo
    or a custom domain / Netlify / Vercel. Without it the APK still works but shows a URL bar.
 
+## More converters (all on-device)
+The home screen has a grid of extra tools. Libraries load only when a tool is opened and are cached for offline use.
+
+| Tool | What it does |
+|---|---|
+| Image converter | JPG / PNG / WebP, resize, quality |
+| Images → PDF | Combine images into one PDF (page size, margins, reorder) |
+| PDF → Images | PNG/JPG per page, page ranges |
+| Merge / Split / Organize / Compress PDF | pdf-lib based; compress offers a light mode and a strong (rasterize) mode |
+| Document → PDF | `.docx`, Markdown, HTML, text. Latin text becomes real selectable text; other scripts (Hindi, Tamil, …) are drawn as page images |
+| Document → EPUB | `.docx`, Markdown, HTML, text → EPUB 3 (images kept, chapters from headings) |
+| EPUB → PDF / text | Reflowable and image-based EPUBs |
+| CSV · JSON · Excel | Any direction (`.xlsx` input; `.xls` not supported) |
+| Create / Extract ZIP | Archive any files |
+
+Code map: `tools.js` (tool registry and conversions), `hub.js` (tiles and generic tool screen), `pdfdoc.js` (document layout engine), `epubbuild.js`, `loader.js` (lazy library loading).
+Not supported without a server: pixel-perfect Office → PDF, PDF → editable Word. Audio/video, OCR and HEIC are candidates for a later batch.
+
 ## Files
 | File | Purpose |
 |---|---|

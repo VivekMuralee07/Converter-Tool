@@ -62,6 +62,16 @@
       </ul>
     </section>
 
+    <section id="stepTools" class="panel tools">
+      <div class="panel-head">
+        <div>
+          <h2>More converters</h2>
+          <p class="muted">Images, PDFs, documents, spreadsheets and ZIP — all on your device.</p>
+        </div>
+      </div>
+      <div id="toolGrid" class="tgrid"></div>
+    </section>
+
     <section id="stepLibrary" class="panel">
       <div class="panel-head">
         <div>
@@ -76,6 +86,32 @@
         <span>Books you convert or open are saved on this device so you can read them again &mdash; even offline.</span>
       </div>
       <ul id="bookList" class="books"></ul>
+    </section>
+
+    <!-- ============ Generic tool screen ============ -->
+    <section id="stepTool" class="panel" hidden>
+      <button id="toolBack" class="btn text back" type="button">← All converters</button>
+      <div class="tool-title">
+        <span id="toolIcon" class="tile-ico big"></span>
+        <div><h2 id="toolTitle"></h2><p id="toolDesc" class="muted"></p></div>
+      </div>
+      <label id="toolDrop" class="drop slim" tabindex="0">
+        <input id="toolFile" type="file" hidden>
+        <span class="btn secondary lg fake"><svg class="ico"><use href="#i-folder"/></svg><span id="toolDropText">Choose files</span></span>
+        <small>or drag &amp; drop here</small>
+      </label>
+      <ul id="toolFiles" class="tfiles"></ul>
+      <div id="toolOpts" class="grid"></div>
+      <div id="toolErr" class="alert" role="alert" hidden></div>
+      <div class="actions">
+        <button id="toolRun" class="btn primary lg block" type="button"><svg class="ico"><use href="#i-wand"/></svg>Convert</button>
+        <p id="toolRunHint" class="hint-line center"></p>
+      </div>
+      <div id="toolProg" class="center" hidden>
+        <div class="bar"><i id="toolBar"></i></div>
+        <p id="toolStatus" class="muted">Starting…</p>
+      </div>
+      <div id="toolOut" class="tool-out" hidden></div>
     </section>
 
     <!-- ============ Options ============ -->
@@ -194,7 +230,7 @@
     </section>
   </main>
 
-  <footer>v18 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
+  <footer>v19 · Reflowable mode extracts text; scanned PDFs need “Fixed pages”.</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
