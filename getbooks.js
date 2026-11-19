@@ -10,10 +10,20 @@ const safe = (s) => (s || 'book').replace(/[\\/:*?"<>|]+/g, '').trim().slice(0, 
 const authorName = (n) => (n || '').replace(/^([^,]+),\s*(.+)$/, '$2 $1');
 
 /* ---------- searching ---------- */
-async function searchGutenberg(q, lang, nextUrl) {
+const TIMEOUT = () => window.__getTimeout || 15000;
+// fetch with a time limit, so a service that never answers can never leave the spinner running
+async function fetchTimed(url, ms = TIMEOUT(), signal) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+  if (signal) signal.addEventListener('abort', () => ac.abort(), { once: true });
+  try { return await fetch(url, { signal: ac.signal }); }
+  catch (e) { throw new Error(ac.signal.aborted && !(signal && signal.aborted) ? 'timeout' : 'network'); }
+  finally { clearTimeout(t); }
+}
+
+async function searchGutenberg(q, lang, nextUrl, signal) {
   const params = new URLSearchParams(); if (q) params.set('search', q); if (lang) params.set('languages', lang);
-  const r = await fetch(nextUrl || `https://gutendex.com/books/?${params}`);
-  if (!r.ok) throw new Error('Project Gutenberg search is not available right now.');
+  const r = await fetchTimed(nextUrl || `https://gutendex.com/books/?${params}`, TIMEOUT(), signal);
+  if (!r.ok) throw new Error('http');
   const j = await r.json();
   return {
     next: j.next || null,
@@ -25,19 +35,24 @@ async function searchGutenberg(q, lang, nextUrl) {
   };
 }
 
-async function searchArchive(q, page) {
-  const clean = q.replace(/[()":\\]/g, ' ').trim();
-  const query = `${clean ? `(${clean}) AND ` : ''}mediatype:texts AND -access-restricted-item:true AND (licenseurl:*creativecommons* OR licenseurl:*publicdomain*) AND (format:EPUB OR format:PDF)`;
+// Internet Archive. mode 'open' = explicitly licensed texts (Creative Commons / public domain mark);
+// mode 'gutenberg' = the Internet Archive's own copy of Project Gutenberg (used when Gutendex is slow or down).
+async function searchArchive(q, page, mode = 'open', signal) {
+  const clean = q.replace(/[()":\\[\]]/g, ' ').trim();
+  const scope = mode === 'gutenberg' ? 'collection:gutenberg' : 'licenseurl:[* TO *]';
+  const query = `${clean ? `(${clean}) AND ` : ''}mediatype:texts AND -access-restricted-item:true AND ${scope}`;
   const p = new URLSearchParams({ q: query, rows: '20', page: String(page), output: 'json' });
   ['identifier', 'title', 'creator', 'year', 'downloads', 'licenseurl'].forEach((f) => p.append('fl[]', f)); p.append('sort[]', 'downloads desc');
-  const r = await fetch(`https://archive.org/advancedsearch.php?${p}`);
-  if (!r.ok) throw new Error('Internet Archive search is not available right now.');
-  const j = await r.json(), docs = (j.response && j.response.docs) || [], total = (j.response && j.response.numFound) || 0;
+  const r = await fetchTimed(`https://archive.org/advancedsearch.php?${p}`, TIMEOUT(), signal);
+  if (!r.ok) throw new Error('http');
+  const j = await r.json();
+  if (!j.response) throw new Error('http');         // the Archive reports a bad search as an error message, not results
+  const docs = j.response.docs || [], total = j.response.numFound || 0;
   return {
     more: page * 20 < total,
     items: docs.map((d) => ({ src: 'ia', id: d.identifier, title: (Array.isArray(d.title) ? d.title[0] : d.title) || d.identifier, author: Array.isArray(d.creator) ? d.creator.join(', ') : (d.creator || ''),
       cover: `https://archive.org/services/img/${d.identifier}`, downloads: d.downloads || 0, page: `https://archive.org/details/${d.identifier}`,
-      note: /publicdomain/i.test(d.licenseurl || '') ? 'Public domain' : 'Open licence' })),
+      note: mode === 'gutenberg' ? 'Project Gutenberg (Internet Archive copy)' : /publicdomain/i.test(d.licenseurl || '') ? 'Public domain' : 'Open licence' })),
   };
 }
 
@@ -92,26 +107,44 @@ export function initGet({ toast, openBook, openPdf, onAdded }) {
     $('gSpin').hidden = !st.loading;
   }
 
+  const why = (e, name) => (e.message === 'timeout' ? `${name} is taking too long to answer.` : e.message === 'http' ? `${name} is not available right now.` : `Could not reach ${name}.`);
+
+  // Searches run side by side and their results appear as soon as each one answers.
   async function load(more = false) {
-    if (st.loading) return;
-    const token = ++st.token; st.loading = true; $('gErr').hidden = true;
+    st.abort && st.abort.abort();                    // a new search replaces any search still running
+    const ac = new AbortController(); st.abort = ac;
+    const token = ++st.token; st.loading = true; $('gErr').hidden = true; clearTimeout(st.slowT); $('gSlow').hidden = true;
     if (!more) { st.items = []; st.pgNext = null; st.iaPage = 0; st.iaMore = false; }
-    render();
+    const q = st.q.trim(), errors = [];
     const wantPg = st.source !== 'ia' && (!more || st.pgNext);
-    const wantIa = st.source !== 'pg' && (st.q.trim().length > 0 || st.source === 'ia') && (!more || st.iaMore); // with no search words, "All" shows Gutenberg's most popular books
-    const jobs = [], errors = [];
-    if (wantPg) jobs.push(searchGutenberg(st.q.trim(), st.lang, more ? st.pgNext : null).then((r) => { st.pgNext = r.next; return r.items; }).catch((e) => { errors.push(e.message); st.pgNext = null; return []; }));
-    if (wantIa) jobs.push(searchArchive(st.q.trim(), st.iaPage + 1).then((r) => { st.iaPage++; st.iaMore = r.more; return r.items; }).catch((e) => { errors.push(e.message); st.iaMore = false; return []; }));
-    const got = (await Promise.all(jobs)).flat();
-    if (token !== st.token) return;
-    await refreshHave();
-    // interleave the two sources so neither floods the list
-    const pg = got.filter((x) => x.src === 'pg'), ia = got.filter((x) => x.src === 'ia'), mix = [];
-    for (let i = 0; i < Math.max(pg.length, ia.length); i++) { if (pg[i]) mix.push(pg[i]); if (ia[i]) mix.push(ia[i]); }
-    st.items = st.items.concat(mix); st.loading = false;
-    if (errors.length && !st.items.length) { $('gErr').textContent = `${errors[0]} Check your internet connection and try again.`; $('gErr').hidden = false; }
-    else if (errors.length) toast(errors[0]);
+    const wantIa = st.source !== 'pg' && (q.length > 0 || st.source === 'ia') && (!more || st.iaMore); // with no search words, "All" shows Gutenberg's most popular books
+    let pending = 0, mirrorNeeded = false;
+    st.slowT = setTimeout(() => { if (token === st.token) $('gSlow').hidden = false; }, 5000);
+    await refreshHave().catch(() => {});
     render();
+    const addItems = (items) => { if (token !== st.token) return; st.items = st.items.concat(items); render(); };
+    const finish = () => {
+      if (token !== st.token || --pending > 0) return;
+      st.loading = false; clearTimeout(st.slowT); $('gSlow').hidden = true;
+      if (errors.length && !st.items.length) { $('gErrText').textContent = `${errors[0]} Check your internet connection and try again.`; $('gErr').hidden = false; }
+      else if (errors.length) toast(errors[0], 4500);
+      render();
+    };
+    const job = (fn) => { pending++; fn().catch(() => {}).finally(finish); };
+    if (wantPg) job(async () => {
+      try { const r = await searchGutenberg(q, st.lang, more ? st.pgNext : null, ac.signal); st.pgNext = r.next; addItems(r.items); }
+      catch (e) {
+        if (token !== st.token) return; st.pgNext = null; errors.push(why(e, 'Project Gutenberg search'));
+        if (!more && q && !wantIa) { // fall back to the Internet Archive's copy of Gutenberg
+          try { const r = await searchArchive(q, 1, 'gutenberg', ac.signal); st.iaPage = 1; st.iaMore = r.more; errors.length = 0; addItems(r.items); toast('Project Gutenberg search is slow, so these come from the Internet Archive copy.', 4500); } catch { /* keep the first error */ }
+        }
+      }
+    });
+    if (wantIa) job(async () => {
+      try { const r = await searchArchive(q, st.iaPage + 1, 'open', ac.signal); st.iaPage++; st.iaMore = r.more; addItems(r.items); }
+      catch (e) { if (token !== st.token) return; st.iaMore = false; errors.push(why(e, 'Internet Archive search')); }
+    });
+    if (!pending) { st.loading = false; clearTimeout(st.slowT); render(); }
   }
 
   async function add(it, btn) {
@@ -145,6 +178,7 @@ export function initGet({ toast, openBook, openPdf, onAdded }) {
   document.querySelectorAll('#gSources [data-src]').forEach((b) => (b.onclick = () => { document.querySelectorAll('#gSources [data-src]').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); if (st.started) search(); }));
   $('gLang').addEventListener('change', () => st.started && search());
   $('gMore').onclick = () => load(true);
+  $('gRetry').onclick = () => search();
 
   return { enter() { if (!st.started) { st.started = true; load(false); } else refreshHave().then(render); } };
 }
