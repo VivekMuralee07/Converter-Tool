@@ -150,6 +150,6 @@ export function initHub({ show }) {
   drop.addEventListener('drop', (e) => addFiles([...e.dataTransfer.files]));
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('toolFile').click(); } });
   $('toolRun').onclick = run;
-  $('toolBack').onclick = () => { if (busy) return; revokeIn(); revokeOut(); files = []; show('stepPick'); };
+  $('toolBack').onclick = () => { if (busy) return; revokeIn(); revokeOut(); files = []; show('stepTools'); };
   return { openTool };
 }
