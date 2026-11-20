@@ -1,4 +1,5 @@
 import { sourceToDoc, domToBlocks } from './pdfdoc.js';
+import { fromElement } from './inline.js';
 
 // Reads an EPUB file into the structure the Book viewer understands.
 // Fixed-layout (image) books -> pageImages; text books -> blocks (headings/paragraphs).
@@ -39,18 +40,27 @@ export async function parseEpub(blob) {
     if (doc.querySelector('parsererror')) doc = xml(src, 'text/html');
     docs.push({ item, body: doc.body || doc.documentElement });
   }
-  const imageOnly = docs.filter((d) => d.body.querySelector('img, image') && d.body.textContent.replace(/\s+/g, ' ').trim().length < 30);
+  // text laid invisibly over a page picture (.tl) does not make a page a text page
+  const ownText = (d) => d.body.textContent.replace(/\s+/g, ' ').trim().length - [...d.body.querySelectorAll('.tl')].reduce((t, e) => t + e.textContent.replace(/\s+/g, ' ').trim().length, 0);
+  const imageOnly = docs.filter((d) => d.body.querySelector('img, image') && ownText(d) < 30);
   const result = { title, author, coverBlob, pageCount: spine.length, mode: 'reflow', blocks: null, pageImages: null, skipFirst: false };
 
   if (docs.length && imageOnly.length > docs.length / 2) { // fixed-layout book: images are loaded page by page
-    const paths = [];
+    const paths = [], pageTexts = [];
     for (const d of imageOnly) {
       const img = d.body.querySelector('img, image');
       const href = img.getAttribute('src') || img.getAttribute('href') || img.getAttribute('xlink:href');
-      if (href && zip.file(resolve(d.item.href, href))) paths.push(resolve(d.item.href, href));
+      if (href && zip.file(resolve(d.item.href, href))) {
+        paths.push(resolve(d.item.href, href));
+        pageTexts.push([...d.body.querySelectorAll('.tl span')].map((sp) => {
+          const st = sp.getAttribute('style') || '', num = (re) => { const m = re.exec(st); return m ? +m[1] : null; };
+          return { t: sp.textContent, l: num(/left:\s*(-?[\d.]+)%/), tp: num(/top:\s*(-?[\d.]+)%/), fs: num(/font-size:\s*([\d.]+)vw/), sx: num(/scaleX\(([\d.]+)\)/) || 1 };
+        }).filter((o) => o.t && o.l !== null && o.tp !== null && o.fs));
+      }
     }
     if (!paths.length) throw new Error('No page images found in this EPUB.');
     Object.assign(result, { mode: 'fixed', lazyImages: true, imageCount: paths.length, loadImage: (i) => fileBlob(paths[i]) });
+    if (pageTexts.some((t) => t.length)) result.pageTexts = pageTexts;
     return result;
   }
   result.blocks = [];
@@ -69,10 +79,18 @@ export async function parseEpub(blob) {
         continue;
       }
       if (el.parentElement && el.parentElement.closest(SEL)) continue; // nested: parent already covers it
-      const t = el.textContent.replace(/\s+/g, ' ').trim();
-      if (!t) continue;
       const tag = el.tagName.toLowerCase();
-      result.blocks.push({ t: tag === 'h1' ? 'h1' : /^h[2-6]$/.test(tag) ? 'h2' : 'p', text: t, align: el.classList.contains('center') ? 'center' : undefined });
+      if (/^h[1-6]$/.test(tag)) { const t = el.textContent.replace(/\s+/g, ' ').trim(); if (t) result.blocks.push({ t: tag === 'h1' ? 'h1' : 'h2', text: t }); continue; }
+      const { text: t, fmt } = fromElement(el); // keeps bold and italic
+      if (!t) continue;
+      const blk = { t: 'p', text: t, align: el.classList.contains('center') ? 'center' : undefined };
+      if (fmt.length) blk.fmt = fmt;
+      if (tag === 'li') {
+        const par = el.parentElement, ordered = !!par && par.tagName.toLowerCase() === 'ol';
+        Object.assign(blk, { t: 'li', ordered });
+        if (ordered) blk.n = (parseInt(par.getAttribute('start'), 10) || 1) + [...par.children].filter((c) => c.tagName.toLowerCase() === 'li').indexOf(el);
+      }
+      result.blocks.push(blk);
     }
   }
   if (!result.blocks.some((b) => b.t !== 'img')) throw new Error('No readable text found in this EPUB.');

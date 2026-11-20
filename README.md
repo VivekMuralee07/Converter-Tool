@@ -6,6 +6,10 @@ page-turning 3D book preview of the result.
 - **Reflowable text** mode: extracts text, detects headings/paragraphs, strips repeated headers/footers
   and page numbers, splits into chapters, writes a valid EPUB 3 (with EPUB 2 NCX fallback).
 - **Fixed pages** mode: renders every page as an image (EPUB 3 pre-paginated). Use for scanned PDFs, comics, complex layouts.
+- **Chapters from bookmarks**: if the PDF has a bookmark outline it becomes the EPUB chapter list (nested contents for sub-entries), in both modes.
+- **Formatting kept** in Reflowable books: bold, italic, bullet and numbered lists. Two-column pages are read left column first, then right.
+- **Searchable Fixed pages**: an invisible text layer sits over each page picture, so search, selecting text, the dictionary and read-aloud work in textbooks too (not for scanned PDFs without text; use OCR/Reflowable for those).
+- **Recommended settings**: after you choose a PDF the app looks at a few pages and pre-selects Reflowable or Fixed pages with a short explanation.
 - Book preview: two-page spread on wide screens, single page on phones; tap edges, swipe, or use ← → keys.
 - Offline-capable (service worker), installable, registers as a handler for `.pdf` files where supported.
 - Libraries are vendored in `lib/` (pdf.js, JSZip) so no CDN is needed.

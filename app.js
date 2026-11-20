@@ -31,7 +31,7 @@ async function pick(f) {
   $('fileName').textContent = f.name;
   const guess = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ');
   $('title').value = guess;
-  $('author').value = ''; $('from').value = ''; $('to').value = ''; $('ocr').checked = false; $('scanHint').hidden = true; $('pickPages').hidden = true; syncFit();
+  $('author').value = ''; $('from').value = ''; $('to').value = ''; $('ocr').checked = false; $('scanHint').hidden = true; $('recBox').hidden = true; $('pickPages').hidden = true; document.querySelector('input[name=mode][value=reflow]').checked = true; syncFit();
   show('stepOptions');
   try { // prefill from PDF metadata and look for a text layer
     const { openPdf } = await import('./converter.js');
@@ -45,7 +45,17 @@ async function pick(f) {
     $('rangeHint').textContent = `This PDF has ${totalPages} pages. Tip: for big books convert one chapter at a time — it is faster and the files stay small.`;
     let chars = 0; const sample = Math.min(5, totalPages);
     for (let i = 0; i < sample; i++) { const pg = await pdf.getPage(1 + Math.floor(i * totalPages / sample)); chars += (await pg.getTextContent()).items.reduce((t, x) => t + x.str.length, 0); }
-    if (file === f && chars < 25 * sample) { $('scanHint').hidden = false; $('ocr').checked = true; syncFit(); } // no text layer: it is a scan
+    if (file === f && chars < 25 * sample) { $('scanHint').hidden = false; $('ocr').checked = true; syncFit(); return; } // no text layer: it is a scan
+    const { profilePdf } = await import('./converter.js'), pr = await profilePdf(pdf);
+    if (file !== f) return;
+    const fixed = pr.formulas || pr.pictures;
+    document.querySelector(`input[name=mode][value=${fixed ? 'fixed' : 'reflow'}]`).checked = true;
+    if (fixed) $('fit').checked = matchMedia('(max-width: 700px)').matches;
+    syncFit();
+    $('recText').innerHTML = fixed
+      ? '<b>Recommended: Fixed pages.</b> This PDF has many formulas, tables or pictures, so pages keep their exact look (the text on them is still searchable)' + (pr.outline ? ` and your ${pr.outline} bookmarks become the chapter list.` : '.')
+      : '<b>Recommended: Reflowable text.</b> It is mostly running text, so it will adapt to your screen' + (pr.outline ? `, with ${pr.outline} chapters taken from the PDF bookmarks` : '') + (pr.columns ? '; two-column pages are read in the right order' : '') + '.';
+    $('recBox').hidden = false;
   } catch { /* metadata is optional */ }
 }
 
@@ -75,7 +85,7 @@ async function run(quick = false) {
     $('fname').value = fname;
     const mb = (res.epub.size / 1048576).toFixed(1);
     $('resultTitle').textContent = `“${opts.title}” is ready`;
-    $('resultInfo').textContent = `${res.pageCount} PDF pages · ${mb} MB` + (res.mode === 'reflow' && !res.hasText ? ' · no text found — try “Fixed pages”' : res.messy ? ' · lots of formulas/symbols detected — “Fixed pages” will look better' : '');
+    $('resultInfo').textContent = `${res.pageCount} PDF pages · ${mb} MB` + (res.outline ? ` · ${res.outline} chapters from bookmarks` : '') + (res.hasTextLayer ? ' · searchable text' : '') + (res.mode === 'reflow' && !res.hasText ? ' · no text found — try “Fixed pages”' : res.messy ? ' · lots of formulas/symbols detected — “Fixed pages” will look better' : '');
     const mkShare = () => new File([res.epub], safeName($('fname').value) + '.epub', { type: 'application/epub+zip' });
     $('shareBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [mkShare()] }));
     $('shareBtn').onclick = () => navigator.share({ files: [mkShare()], title: $('fname').value }).catch(() => {});
@@ -360,7 +370,7 @@ function runSearch() {
     const sn = li.querySelector('.snip'); sn.append(document.createTextNode(r.snippet.slice(0, r.at)));
     const em = document.createElement('em'); em.textContent = r.snippet.slice(r.at, r.at + (r.e - r.s)); sn.appendChild(em); sn.append(document.createTextNode(r.snippet.slice(r.at + (r.e - r.s))));
     li.lastChild.textContent = pageNo(r.page);
-    li.onclick = () => { sheet(false); readerBook.goToPage(r.page); hitPage = r.page; readerBook.hitAt({ b: r.b, s: r.s, e: r.e }); };
+    li.onclick = () => { sheet(false); readerBook.goToPage(r.page); hitPage = r.page; readerBook.hitAt(r.ks ? { p: r.page, ks: r.ks } : { b: r.b, s: r.s, e: r.e }); };
     ul.appendChild(li);
   }
 }
@@ -412,6 +422,7 @@ $('rCopyNotes').onclick = async () => {
 // text selection -> highlight toolbar
 function addHighlights(color, note = '') {
   const rs = readerBook.selectionRanges(); if (!rs.length) return;
+  if (rs.some((r) => r.fixed)) { toast('Highlighting works in text books. Define and Copy work on page pictures.', 2600); return; }
   const g = uid(); setHighlights([...annot.highlights, ...rs.map((r) => ({ id: uid(), g, b: r.b, s: r.s, e: r.e, c: color, note, text: r.text, created: Date.now() }))]);
   getSelection().removeAllRanges(); $('selBar').hidden = true; saveAnnot(); readerBook.refreshMarks(); toast(note ? 'Note saved' : 'Highlighted', 1400);
 }
@@ -541,7 +552,7 @@ async function openReader(data, id, startFrac = 0, from = 'stepLibrary') {
   reader.classList.remove('chrome-hidden');
   $('rProg').hidden = true;
   const isText = !data.pageImages && !data.lazyImages;
-  document.querySelectorAll('#rSheet .txt').forEach((x) => (x.hidden = !isText)); // text-only settings
+  document.querySelectorAll('#rSheet .txt').forEach((x) => (x.hidden = !(isText || (data.pageTexts && x.hasAttribute('data-tl'))))); // text-only settings (search, read aloud and the dictionary also work on page pictures that carry a text layer)
   $('rMark').hidden = false;
   readerBook = new Book($('rStage'), $('rBook'), (s) => {
     $('rInfo').textContent = s.label;

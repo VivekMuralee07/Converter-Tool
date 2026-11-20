@@ -174,6 +174,8 @@
         </label>
       </fieldset>
 
+      <div id="recBox" class="notice" hidden>✨ <span id="recText"></span></div>
+
       <div id="scanHint" class="notice" hidden>🔍 <span>This PDF looks <b>scanned</b> (no text found), so OCR has been switched on below.</span></div>
 
       <div id="reflowRow" class="fitbox">
@@ -360,10 +362,10 @@
             <div class="srow"><span class="slabel">Page turn</span>
               <div class="seg" role="group" aria-label="Page turn"><button class="segb" data-turn="curl" type="button">Curl</button><button class="segb" data-turn="slide" type="button">Slide</button><button class="segb" data-turn="none" type="button">None</button></div>
             </div>
-            <div class="srow txt"><span class="slabel">Dictionary pop-up</span>
+            <div class="srow txt" data-tl><span class="slabel">Dictionary pop-up</span>
               <div class="seg" role="group" aria-label="Dictionary pop-up"><button class="segb" data-dict="on" type="button">On</button><button class="segb" data-dict="off" type="button">Off</button></div>
             </div>
-            <div class="srow col txt"><span class="slabel">Dictionary <b id="dictState"></b></span>
+            <div class="srow col txt" data-tl><span class="slabel">Dictionary <b id="dictState"></b></span>
               <button id="dictOffline" class="btn secondary" type="button" style="color:var(--sheet-ink);background:var(--chrome-bg);border-color:transparent">Save dictionary for offline use (about 8 MB)</button>
             </div>
             <div class="srow col"><span class="slabel">Position <b id="rPct"></b></span>
@@ -372,9 +374,9 @@
             </div>
             <div class="agrid">
               <button id="rToc" class="btn secondary" type="button">Contents</button>
-              <button id="rSearchBtn" class="btn secondary txt" type="button">Search</button>
+              <button id="rSearchBtn" class="btn secondary txt" data-tl type="button">Search</button>
               <button id="rMarksBtn" class="btn secondary" type="button">Bookmarks &amp; notes</button>
-              <button id="rTts" class="btn secondary txt" type="button">Read aloud</button>
+              <button id="rTts" class="btn secondary txt" data-tl type="button">Read aloud</button>
               <button id="rFull" class="btn secondary" type="button">Full screen</button>
             </div>
           </div>
@@ -474,7 +476,7 @@
 
   <div id="toast" class="toast" role="status" hidden></div>
 
-  <footer>v30</footer>
+  <footer>v31</footer>
 
   <script src="lib/jszip.min.js"></script>
   <script type="module" src="app.js"></script>
