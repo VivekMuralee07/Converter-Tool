@@ -1,6 +1,7 @@
 // PDF -> EPUB conversion, entirely client-side (pdf.js + JSZip).
 import * as pdfjsLib from './lib/pdf.min.mjs';
 import { loadScript } from './loader.js';
+import { normalize, shiftFmt, toHtml } from './inline.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('./lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -111,7 +112,7 @@ function makeStripper(aspect, Wc, emit) {
   let strip = document.createElement('canvas'); strip.width = Wc; strip.height = sliceH * 3;
   let sctx = strip.getContext('2d', { willReadFrequently: true });
   sctx.fillStyle = '#fff'; sctx.fillRect(0, 0, Wc, strip.height);
-  let pendH = 0;
+  let pendH = 0, texts = [];
 
   const flatRow = (data, y, top) => {
     const o = (y - top) * Wc * 4; let mn = 255, mx = 0;
@@ -125,13 +126,15 @@ function makeStripper(aspect, Wc, emit) {
         const top = Math.floor(sliceH * 0.72), data = sctx.getImageData(0, top, Wc, sliceH - top).data;
         for (let t = sliceH; t > top; t--) if (t < pendH && flatRow(data, t - 1, top)) { end = t; break; }
       }
+      const mine = texts.filter((t) => t.base <= end), rest = texts.filter((t) => t.base > end);
+      rest.forEach((t) => { t.base -= end; }); texts = rest;
       const full = sctx.getImageData(0, 0, Wc, end).data;
       let ink = false;
       for (let i = 1; i < full.length; i += 16) if (full[i] < 200) { ink = true; break; }
       if (ink) {
         const c = document.createElement('canvas'); c.width = Wc; c.height = end;
         c.getContext('2d').drawImage(strip, 0, 0, Wc, end, 0, 0, Wc, end);
-        await emit({ blob: await toBlob(c, 0.8), w: Wc, h: end });
+        await emit({ blob: await toBlob(c, 0.8), w: Wc, h: end, texts: mine });
         c.width = c.height = 0;
       }
       sctx.drawImage(strip, 0, end, Wc, pendH - end, 0, 0, Wc, pendH - end);
@@ -141,13 +144,15 @@ function makeStripper(aspect, Wc, emit) {
     }
   }
   return {
-    async addSeg(src, sx, sy, sw, sh, dw, dh) {
+    async addSeg(src, sx, sy, sw, sh, dw, dh, items = []) {
       if (pendH + dh + GAP > strip.height) { // grow the strip
         const n = document.createElement('canvas'); n.width = Wc; n.height = pendH + dh + GAP + sliceH;
         const nc = n.getContext('2d', { willReadFrequently: true }); nc.fillStyle = '#fff'; nc.fillRect(0, 0, n.width, n.height);
         nc.drawImage(strip, 0, 0); strip.width = strip.height = 0; strip = n; sctx = nc;
       }
-      sctx.drawImage(src, sx, sy, sw, sh, Math.round(Wc * 0.015), pendH, dw, dh);
+      const dx = Math.round(Wc * 0.015), kx = dw / sw, ky = dh / sh;
+      sctx.drawImage(src, sx, sy, sw, sh, dx, pendH, dw, dh);
+      for (const t of items) texts.push({ t: t.t, x: dx + (t.x - sx) * kx, base: pendH + (t.base - sy) * ky, fs: t.fs * kx, w: t.w * kx });
       pendH += dh + Math.round(GAP / 2);
     },
     async endPage() { pendH += GAP; await cut(false); },
@@ -262,13 +267,21 @@ async function ocrPageLines(worker, page, scale = 2.2) {
 }
 
 /* ---------- text extraction ---------- */
-export async function extractLines(page) {
-  const vp = page.getViewport({ scale: 1 });
-  const tc = await page.getTextContent();
-  const items = tc.items
-    .filter((i) => i.str && i.str.trim() !== '')
-    .map((i) => ({ str: i.str, x: i.transform[4], y: i.transform[5], size: Math.hypot(i.transform[0], i.transform[1]) || i.height, w: i.width }));
-  items.sort((a, b) => b.y - a.y || a.x - b.x);
+// bold / italic flags for each font used on the page (1 = bold, 2 = italic); needs the page's operator list to have been read
+async function fontFlags(page, tc) {
+  try { await page.getOperatorList(); } catch { /* fonts unknown */ }
+  const map = {};
+  for (const fn of new Set(tc.items.map((i) => i.fontName))) {
+    let f = null; try { f = page.commonObjs.has(fn) ? page.commonObjs.get(fn) : null; } catch { /* not loaded */ }
+    const name = (f && f.name) || (tc.styles[fn] && tc.styles[fn].fontFamily) || '';
+    map[fn] = ((f && f.bold) || /bold|black|heavy|semibold|demi/i.test(name) ? 1 : 0) | ((f && f.italic) || /italic|oblique/i.test(name) ? 2 : 0);
+  }
+  return map;
+}
+
+// groups text pieces into lines (top to bottom, left to right)
+function groupItems(items, vp, col = 0) {
+  items = items.slice().sort((a, b) => b.y - a.y || a.x - b.x);
   const lines = [];
   for (const it of items) {
     const last = lines[lines.length - 1];
@@ -277,18 +290,64 @@ export async function extractLines(page) {
   }
   return lines.map((l) => {
     l.items.sort((a, b) => a.x - b.x);
-    let text = '', prev = null, chars = {}, cols = 0;
+    let raw = '', flags = [], prev = null, chars = {}, cols = 0;
+    const put = (str, f) => { raw += str; for (let k = 0; k < str.length; k++) flags.push(f); };
     for (const it of l.items) {
       if (prev && it.x - (prev.x + prev.w) > Math.max(it.size * 1.8, 14)) cols++; // wide gap = another table column
-      if (prev && !text.endsWith(' ') && !it.str.startsWith(' ') && it.x - (prev.x + prev.w) > it.size * 0.15) text += ' ';
-      text += it.str; prev = it;
+      if (prev && !raw.endsWith(' ') && !it.str.startsWith(' ') && it.x - (prev.x + prev.w) > it.size * 0.15) put(' ', 0);
+      put(it.str, it.fl); prev = it;
       const k = Math.round(it.size * 2) / 2; chars[k] = (chars[k] || 0) + it.str.length;
     }
     const size = +Object.entries(chars).sort((a, b) => b[1] - a[1])[0][0];
     const first = l.items[0], lastIt = l.items[l.items.length - 1];
-    const clean = text.replace(/\s+/g, ' ').trim(), sym = clean.length ? (clean.match(/[^\p{L}\p{N}\s.,;:!?'"()\-–—’“”‘]/gu) || []).length / clean.length : 0;
-    return { text: clean, y: l.y, x: first.x, right: lastIt.x + lastIt.w, size, pageH: vp.height, pageW: vp.width, cols, sym };
+    const { text: clean, fmt } = normalize(raw, flags), sym = clean.length ? (clean.match(/[^\p{L}\p{N}\s.,;:!?'"()\-–—’“”‘]/gu) || []).length / clean.length : 0;
+    return { text: clean, fmt, y: l.y, x: first.x, right: lastIt.x + lastIt.w, size, pageH: vp.height, pageW: vp.width, cols, sym, col };
   }).filter((l) => l.text);
+}
+
+// A page set in two columns has a clear vertical gutter that (almost) no text crosses. Returns its x, or null.
+function findGutter(items, W) {
+  if (items.length < 30) return null;
+  const xs = items.map((i) => [i.x, i.x + i.w]);
+  let best = null;
+  for (let g = W * 0.3; g <= W * 0.7; g += 2) {
+    let cross = 0, l = 0, r = 0;
+    for (const [x0, x1] of xs) { if (x0 < g + 4 && x1 > g - 4) cross++; else if (x1 <= g) l++; else r++; }
+    if (cross <= items.length * 0.08 && l >= items.length * 0.25 && r >= items.length * 0.25 && (!best || cross < best.cross || (cross === best.cross && Math.abs(g - W / 2) < Math.abs(best.g - W / 2)))) best = { g, cross };
+  }
+  return best ? best.g : null;
+}
+
+export async function extractLines(page, withItems = false) {
+  const vp = page.getViewport({ scale: 1 });
+  const tc = await page.getTextContent();
+  const flags = await fontFlags(page, tc);
+  const items = tc.items
+    .filter((i) => i.str && i.str.trim() !== '')
+    .map((i) => ({ str: i.str, x: i.transform[4], y: i.transform[5], size: Math.hypot(i.transform[0], i.transform[1]) || i.height, w: i.width, fl: flags[i.fontName] || 0 }));
+  let lines;
+  const g = findGutter(items, vp.width);
+  if (g !== null) {
+    const L = items.filter((i) => i.x + i.w <= g + 4 && !(i.x < g + 4 && i.x + i.w > g - 4)), R = items.filter((i) => i.x >= g - 4 && !(i.x < g + 4 && i.x + i.w > g - 4));
+    const F = items.filter((i) => i.x < g + 4 && i.x + i.w > g - 4);
+    const mode = (ls, dflt) => { const c = {}; for (const l of ls) { const k = Math.round(l.x / 2) * 2; c[k] = (c[k] || 0) + 1; } const e = Object.entries(c).sort((a, b) => b[1] - a[1])[0]; return e ? +e[0] : dflt; };
+    const gl = groupItems(L, vp, 1), gr = groupItems(R, vp, 2), gf = groupItems(F, vp, 0);
+    // two columns only if both sides really hold running text
+    const longL = gl.filter((l) => l.right - l.x > vp.width * 0.22).length, longR = gr.filter((l) => l.right - l.x > vp.width * 0.22).length;
+    if (longL >= 6 && longR >= 6) {
+      const bl = mode(gl, 0), br = mode(gr, g);
+      gl.forEach((l) => { l.base = bl; l.gut = g; }); gr.forEach((l) => { l.base = br; l.gut = g; }); gf.forEach((l) => { l.gut = g; });
+      // reading order: full-width lines separate bands; inside a band the left column comes first, then the right
+      const out = []; let a = [], b = [];
+      for (const l of [...gl, ...gr, ...gf].sort((p, q) => q.y - p.y)) {
+        if (l.col === 0) { out.push(...a, ...b, l); a = []; b = []; } else (l.col === 1 ? a : b).push(l);
+      }
+      out.push(...a, ...b); lines = out;
+    }
+  }
+  if (!lines) lines = groupItems(items, vp, 0);
+  if (withItems) return { lines, items, vp };
+  return lines;
 }
 
 export function stripHeadersFooters(pagesLines) {
@@ -311,6 +370,14 @@ export function stripHeadersFooters(pagesLines) {
   }));
 }
 
+// joins two formatting range lists (the second one starts at `by` in the combined text)
+const joinFmt = (a, b, by, max) => {
+  const out = (a || []).map((r) => [r[0], Math.min(r[1], max), r[2]]).filter((r) => r[1] > r[0]);
+  for (const r of shiftFmt(b, by)) { const p = out[out.length - 1]; if (p && p[2] === r[2] && r[0] - p[1] <= 1) p[1] = r[1]; else out.push(r); }
+  return out;
+};
+const BULLET = /^[•●▪◦‣▫■□∙]\s*/, NUMBER = /^(\d{1,2})[.)]\s+(?=[\p{L}“"‘'(])/u;
+
 export function buildBlocks(pagesLines, pagesImgs = []) {
   const all = pagesLines.flat();
   const sizeW = {};
@@ -320,13 +387,30 @@ export function buildBlocks(pagesLines, pagesImgs = []) {
   for (const l of all) { const k = Math.round(l.x / 2) * 2; xs[k] = (xs[k] || 0) + 1; }
   const left = +(Object.entries(xs).sort((a, b) => b[1] - a[1])[0] || [0])[0];
   const widths = all.map((l) => l.right - l.x).sort((a, b) => a - b), bodyW = widths[Math.floor(widths.length * 0.9)] || 1; // typical full line width
+  // bold / italic only where it is emphasis: if most of the book is flagged, the flag is just the body font
+  let totalChars = 0, boldChars = 0, italChars = 0;
+  for (const l of all) { totalChars += l.text.length; for (const [s0, e0, f] of l.fmt || []) { if (f & 1) boldChars += e0 - s0; if (f & 2) italChars += e0 - s0; } }
+  const mask = (boldChars > totalChars * 0.5 ? 0 : 1) | (italChars > totalChars * 0.5 ? 0 : 2);
+  const fmtOf = (l) => (l.fmt || []).map((r) => [r[0], r[1], r[2] & mask]).filter((r) => r[2]);
 
   const blocks = [];
   const endsSentence = /[.!?:"”’)\]]$/;
   pagesLines.forEach((lines, pi) => {
-    const maxW = Math.max(1, ...lines.map((l) => l.right - l.x));
-    // text lines and pictures in reading order (top to bottom)
-    const items = [...lines.map((l) => ({ y: l.y, l })), ...(pagesImgs[pi] || []).map((im) => ({ y: im.y1, im }))].sort((a, b) => b.y - a.y);
+    const maxWc = {};
+    for (const l of lines) maxWc[l.col || 0] = Math.max(maxWc[l.col || 0] || 1, l.right - l.x);
+    // text lines and pictures in reading order (top to bottom; for a two-column page the lines already come in reading order)
+    const imgs = pagesImgs[pi] || [];
+    let items;
+    if (lines.some((l) => l.col)) {
+      items = lines.map((l) => ({ y: l.y, l }));
+      const gut = lines.find((l) => l.gut).gut;
+      for (const im of imgs) {
+        const c = im.w > im.pageW * 0.6 ? 0 : (im.x0 + im.x1) / 2 < gut ? 1 : 2;
+        let at = items.findIndex((it) => it.l && it.l.y < im.y1 - 1 && (c === 0 || !it.l.col || it.l.col === c));
+        if (at < 0) at = items.length;
+        items.splice(at, 0, { y: im.y1, im });
+      }
+    } else items = [...lines.map((l) => ({ y: l.y, l })), ...imgs.map((im) => ({ y: im.y1, im }))].sort((a, b) => b.y - a.y);
     let prev = null;
     items.forEach((it, idx) => {
       if (it.im) {
@@ -336,6 +420,8 @@ export function buildBlocks(pagesLines, pagesImgs = []) {
         prev = null; return;
       }
       const l = it.l;
+      if (prev && (prev.col || 0) !== (l.col || 0)) prev = null; // moved to another column: decide like at the top of a page
+      const lf = l.base !== undefined ? l.base : left, maxW = maxWc[l.col || 0];
       const level = l.size >= body * 1.5 ? 1 : l.size >= body * 1.15 ? 2 : 0;
       const isHead = level && l.text.length < 140;
       const last = blocks[blocks.length - 1];
@@ -346,31 +432,101 @@ export function buildBlocks(pagesLines, pagesImgs = []) {
       }
       // centred lines (titles, dedications, verse) stay centred, one block per line
       // (only clearly short lines: justified full-width lines measure a little narrow and must not count as centred)
-      if (Math.abs((l.x + l.right) / 2 - l.pageW / 2) < l.pageW * 0.025 && l.right - l.x < bodyW * 0.62 && l.x - left > l.size * 1.5) {
+      if (!l.col && Math.abs((l.x + l.right) / 2 - l.pageW / 2) < l.pageW * 0.025 && l.right - l.x < bodyW * 0.62 && l.x - left > l.size * 1.5) {
         blocks.push({ t: 'p', text: l.text, align: 'center', page: pi }); prev = null; return;
       }
-      let startNew = !last || last.t[0] === 'h' || last.t === 'img' || last.align === 'center';
-      if (!startNew && prev) {
-        const gap = prev.y - l.y;
+      // bullets and numbered items
+      let mk = null;
+      const bm = BULLET.exec(l.text), nm = bm ? null : NUMBER.exec(l.text);
+      if (bm && l.text.length > bm[0].length) mk = { ordered: false, len: bm[0].length };
+      else if (nm) {
+        const n = +nm[1];
+        if (last && last.t === 'li' && last.ordered && n === last.n + 1 && last.page >= pi - 1) mk = { ordered: true, n, len: nm[0].length };
+        else if (n === 1 && (!prev || endsSentence.test(prev.text) || !last || last.t !== 'p')) mk = { ordered: true, n, len: nm[0].length };
+      }
+      if (mk) {
+        const text = l.text.slice(mk.len), fmt = shiftFmt(fmtOf(l), -mk.len);
+        const blk = { t: 'li', ordered: mk.ordered, n: mk.n, text, page: pi }; if (fmt.length) blk.fmt = fmt;
+        blocks.push(blk); prev = l; return;
+      }
+      const gap = prev ? prev.y - l.y : 0;
+      const contLi = last && last.t === 'li' && (!prev || (gap <= l.size * 1.7 && (l.x - lf > l.size * 0.8 || !endsSentence.test(prev.text))));
+      let startNew = !last || last.t[0] === 'h' || last.t === 'img' || last.align === 'center' || (last.t === 'li' && !contLi);
+      if (!startNew && prev && !contLi) {
         const frag = l.text.length <= 4 || prev.text.length <= 4; // math symbols, bullets, stray glyphs
-        const indent = !frag && l.x - left > l.size * 0.8;
+        const indent = !frag && l.x - lf > l.size * 0.8;
         const shortPrev = prev.text.length > 20 && prev.right - prev.x < maxW * 0.7 && endsSentence.test(prev.text);
         startNew = gap > l.size * (frag ? 3 : 1.9) || indent || shortPrev;
-      } else if (!startNew && !prev) {
-        // first line on a new page: continue the paragraph unless it clearly starts a new one
-        startNew = endsSentence.test(last.text) && (l.x - left > l.size * 0.8 || /^[A-Z“"‘']/.test(l.text) && /[.!?”"]$/.test(last.text));
+      } else if (!startNew && !prev && !contLi) {
+        // first line on a new page (or column): continue the paragraph unless it clearly starts a new one
+        startNew = endsSentence.test(last.text) && (l.x - lf > l.size * 0.8 || /^[A-Z“"‘']/.test(l.text) && /[.!?”"]$/.test(last.text));
         if (!/^[a-z0-9,;]/.test(l.text) && endsSentence.test(last.text)) startNew = true;
       }
-      if (startNew) blocks.push({ t: 'p', text: l.text, page: pi });
-      else if (/[-‐]$/.test(last.text) && /^[a-z]/.test(l.text)) last.text = last.text.slice(0, -1) + l.text;
-      else last.text += ' ' + l.text;
+      const f = fmtOf(l);
+      if (startNew) { const blk = { t: 'p', text: l.text, page: pi }; if (f.length) blk.fmt = f; blocks.push(blk); }
+      else {
+        const hyph = /[-‐]$/.test(last.text) && /^[a-z]/.test(l.text), base = hyph ? last.text.length - 1 : last.text.length + 1;
+        last.text = hyph ? last.text.slice(0, -1) + l.text : last.text + ' ' + l.text;
+        const j = joinFmt(last.fmt, f, base, base); if (j.length) last.fmt = j; else delete last.fmt;
+      }
       prev = l;
     });
   });
   return blocks;
 }
 
-function chunkChapters(blocks, pageCount, title, offset = 0) {
+// The PDF's own bookmarks, as [{ title, level (0/1), page (0-based, within the converted range) }]
+async function readOutline(pdf, first, last) {
+  let root; try { root = await pdf.getOutline(); } catch { return []; }
+  if (!root || !root.length) return [];
+  const out = [];
+  const walk = async (items, level) => {
+    for (const it of items) {
+      if (out.length >= 400) return;
+      let pg = null;
+      try {
+        let d = it.dest; if (typeof d === 'string') d = await pdf.getDestination(d);
+        if (Array.isArray(d) && d[0] != null) pg = typeof d[0] === 'object' ? await pdf.getPageIndex(d[0]) : d[0];
+      } catch { /* bookmark to nowhere */ }
+      const title = (it.title || '').replace(/\s+/g, ' ').trim();
+      if (pg != null && title && pg + 1 >= first && pg + 1 <= last) out.push({ title: title.slice(0, 120), level, page: pg + 1 - first });
+      if (it.items && it.items.length && level < 1) await walk(it.items, level + 1);
+    }
+  };
+  await walk(root, 0);
+  return out;
+}
+const normTitle = (t) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+// bookmarks are usable when at least two top-level entries point to different pages
+const usableOutline = (o) => { const top = o.filter((e) => e.level === 0); return top.length >= 2 && new Set(top.map((e) => e.page)).size >= 2 ? o : []; };
+
+function chunkChapters(blocks, pageCount, title, offset = 0, outline = []) {
+  if (outline.length) { // chapters straight from the PDF's bookmarks
+    const tops = [];
+    for (const e of outline) {
+      if (e.level === 0 && !(tops.length && tops[tops.length - 1].page === e.page)) tops.push({ title: e.title, page: e.page, subs: [] });
+      else if (tops.length) tops[tops.length - 1].subs.push({ title: e.title, page: e.page });
+    }
+    const chapters = []; let anchorN = 0;
+    const front = blocks.filter((b) => b.page < tops[0].page);
+    if (front.length) chapters.push({ title, blocks: front, subs: [] });
+    tops.forEach((t, i) => {
+      const end = i + 1 < tops.length ? tops[i + 1].page : Infinity;
+      const bl = blocks.filter((b) => b.page >= t.page && b.page < end);
+      // make sure the chapter starts with a heading carrying its bookmark title
+      const head = bl.slice(0, 3).findIndex((b) => b.t === 'h1' || b.t === 'h2' || (b.t === 'p' && normTitle(b.text) === normTitle(t.title)));
+      if (head >= 0 && (bl[head].t === 'p' || bl[head].t === 'h2')) bl[head].t = 'h1';
+      else if (head < 0) bl.unshift({ t: 'h1', text: t.title, page: t.page });
+      const subs = [];
+      for (const sb of t.subs) {
+        let at = bl.findIndex((b, k) => k > 0 && b.t !== 'img' && normTitle(b.text || '') === normTitle(sb.title)); // the heading itself
+        if (at < 0 && sb.page > t.page) at = bl.findIndex((b) => b.page >= sb.page && b.t !== 'img'); // else the first text on its page
+        if (at > 0) { bl[at].anchor = bl[at].anchor || `s${++anchorN}`; subs.push({ title: sb.title, anchor: bl[at].anchor }); }
+      }
+      chapters.push({ title: t.title, blocks: bl, subs });
+    });
+    return chapters.filter((c) => c.blocks.length);
+  }
   const h1s = blocks.filter((b) => b.t === 'h1').length, openers = blocks.filter((b) => b.t === 'img' && b.opener).length;
   const chapters = [];
   if (h1s < 2 && openers >= 2) { // novels whose chapter numbers are pictures
@@ -395,6 +551,67 @@ function chunkChapters(blocks, pageCount, title, offset = 0) {
   return chapters.length ? chapters : [{ title, blocks: [{ t: 'p', text: '(No extractable text found.)' }] }];
 }
 
+// contents list with one level of sub-entries -> nested <ol> for nav.xhtml, nested <navPoint> for toc.ncx
+function navHtml(toc) {
+  let h = '<ol>', li = false, sub = false;
+  const closeLi = () => { if (sub) { h += '</ol>'; sub = false; } if (li) { h += '</li>'; li = false; } };
+  for (const t of toc) {
+    if (t.level === 1 && li) { if (!sub) { h += '<ol>'; sub = true; } h += `<li><a href="${t.href}">${esc(t.title)}</a></li>`; }
+    else { closeLi(); h += `<li><a href="${t.href}">${esc(t.title)}</a>`; li = true; }
+  }
+  closeLi();
+  return h + '</ol>';
+}
+function ncxPoints(toc) {
+  let n = 0, h = '', li = false;
+  const pt = (t) => `<navPoint id="n${++n}" playOrder="${n}"><navLabel><text>${esc(t.title)}</text></navLabel><content src="${t.href}"/>`;
+  for (const t of toc) {
+    if (t.level === 1 && li) h += pt(t) + '</navPoint>';
+    else { if (li) h += '</navPoint>'; h += pt(t); li = true; }
+  }
+  return h + (li ? '</navPoint>' : '');
+}
+
+/* ---------- quick look at a PDF to recommend settings ---------- */
+export async function profilePdf(pdf) {
+  const n = pdf.numPages, k = Math.min(4, n), picks = [...new Set(Array.from({ length: k }, (_, i) => 1 + Math.floor((i + 0.5) * n / k)))];
+  let chars = 0, lines = 0, flagged = 0, regions = 0, columns = 0, pics = 0;
+  for (const i of picks) {
+    const pg = await pdf.getPage(i);
+    const ls = await extractLines(pg).catch(() => []);
+    chars += ls.reduce((t, l) => t + l.text.length, 0); lines += ls.length;
+    flagged += ls.filter((l) => isMathLine(l) || isTableLine(l)).length; regions += findRegions(ls).boxes.length;
+    if (ls.some((l) => l.col)) columns++;
+    if ((await imageBoxes(pg).catch(() => [])).length) pics++;
+  }
+  const outline = usableOutline(await readOutline(pdf, 1, n)).filter((e) => e.level === 0).length;
+  return { pages: n, scanned: chars < 25 * picks.length, formulas: lines > 0 && (flagged / lines > 0.1 || regions / picks.length >= 4), columns: columns > 0, pictures: pics >= Math.max(2, picks.length - 1), outline };
+}
+
+/* ---------- invisible text over page pictures (search, select, dictionary) ---------- */
+const mctx = document.createElement('canvas').getContext('2d');
+const xmlSafe = (t) => t.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffe\uffff]/g, '');
+// items: { t, x, base, fs, w } in pixels of a W x H picture -> spans { t, l, tp (percent of the picture), fs (vw), sx (horizontal stretch) }
+function layerSpans(items, W, H) {
+  const out = []; mctx.font = '100px serif';
+  const fm = mctx.measureText('Hg'), asc = (fm.fontBoundingBoxAscent || 89) / 100, off = (1 - (asc + (fm.fontBoundingBoxDescent || 22) / 100)) / 2 + asc; // where the baseline sits in a line-height:1 box
+  for (const it of items) {
+    const txt = xmlSafe(it.t); if (!txt.trim() || it.fs < 2) continue;
+    let sx = 1; const m = mctx.measureText(txt).width * it.fs / 100;
+    if (m > 0 && it.w > 0) { sx = it.w / m; if (!isFinite(sx) || sx < 0.3 || sx > 3) sx = 1; }
+    out.push({ t: txt.endsWith(' ') ? txt : txt + ' ', l: +(it.x / W * 100).toFixed(2), tp: +((it.base - it.fs * off) / H * 100).toFixed(2), fs: +(it.fs / W * 100).toFixed(2), sx: Math.abs(sx - 1) > 0.02 ? +sx.toFixed(3) : 1 });
+  }
+  return out;
+}
+const spansHtml = (spans) => (spans.length ? `<div class="tl">${spans.map((o) => `<span style="left:${o.l}%;top:${o.tp}%;font-size:${o.fs}vw${o.sx !== 1 ? `;transform:scaleX(${o.sx})` : ''}">${esc(o.t)}</span>`).join('')}</div>` : '');
+// text pieces of a page in pixels of a picture `W` wide
+async function pageItemsPx(page, W) {
+  if (page.rotate) return [];
+  let tc; try { tc = await page.getTextContent(); } catch { return []; }
+  const [vx0, , vx1, vy1] = page.view, s = W / (vx1 - vx0);
+  return tc.items.filter((i) => i.str && i.str.trim()).map((i) => ({ t: i.str, x: (i.transform[4] - vx0) * s, base: (vy1 - i.transform[5]) * s, fs: (Math.hypot(i.transform[0], i.transform[1]) || i.height) * s, w: i.width * s }));
+}
+
 /* ---------- EPUB packaging ---------- */
 const XHTML = (title, body, extra = '') => `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -405,7 +622,9 @@ const XHTML = (title, body, extra = '') => `<?xml version="1.0" encoding="utf-8"
 const CSS = `body{font-family:serif;line-height:1.5;margin:0 .6em}h1{font-size:1.6em;margin:1.2em 0 .6em}h2{font-size:1.25em;margin:1em 0 .4em}
 p{margin:0 0 .8em;text-align:justify}.center{text-align:center}.fig{text-align:center;margin:1em 0}.fig img{max-width:100%;height:auto}.fig.chap{margin:2.5em 0 1.5em}.fig.eq{margin:.7em 0}.page{margin:0;padding:0;text-align:center}.page img{max-width:100%;max-height:100%}
 html,body.fxb{margin:0;padding:0;height:100%}.fx{margin:0;padding:0;width:100%;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff}
-.fx img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}`;
+.fx img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
+.pg{position:relative;width:100%}.pg img{width:100%;height:auto}.tl{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden}.tl span{position:absolute;white-space:pre;color:transparent;line-height:1;transform-origin:0 0;font-family:serif}
+ul,ol{margin:0 0 .8em;padding-left:1.6em}li{margin:0 0 .3em;text-align:left}`;
 
 function uuid() { return 'urn:uuid:' + (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())); }
 
@@ -414,6 +633,7 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
   const total = pdf.numPages;
   const first = Math.min(total, Math.max(1, from | 0 || 1)), last = Math.min(total, Math.max(first, to | 0 || total));
   const n = last - first + 1; // pages converted
+  const outline = usableOutline(await readOutline(pdf, first, last));
   const cover = await renderPage(await pdf.getPage(first), 1.2, 0.8);
   const zip = new JSZip();
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
@@ -422,16 +642,19 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
   zip.file('OEBPS/cover.jpg', cover.blob);
 
   const id = uuid();
-  const result = { mode, title, author, pageCount: n, blocks: null, pageImages: null, coverBlob: cover.blob };
+  const result = { mode, title, author, pageCount: n, blocks: null, pageImages: null, coverBlob: cover.blob, outline: outline.filter((e) => e.level === 0).length };
   let manifest = '', spine = '', toc = [];
   const fixed = mode === 'fixed';
 
   if (fixed) {
     result.pageImages = [];
-    const add = (img, label, tocTitle) => {
+    result.pageTexts = [];
+    const add = (img, label, tocTitle, spans = []) => {
       const name = `p${String(result.pageImages.length + 1).padStart(4, '0')}`;
       zip.file(`OEBPS/${name}.jpg`, img.blob);
-      zip.file(`OEBPS/${name}.xhtml`, XHTML(label, `<div class="fx"><img src="${name}.jpg" alt="${esc(label)}" style="width:100%;height:auto"/></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
+      if (spans.length) result.hasTextLayer = true;
+      result.pageTexts.push(spans);
+      zip.file(`OEBPS/${name}.xhtml`, XHTML(label, `<div class="fx"><div class="pg"><img src="${name}.jpg" alt="${esc(label)}" style="width:100%;height:auto"/>${spansHtml(spans)}</div></div>`, `<meta name="viewport" content="width=${img.w}, height=${img.h}"/>`));
       manifest += `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"/><item id="${name}i" href="${name}.jpg" media-type="image/jpeg"/>`;
       spine += `<itemref idref="${name}"/>`;
       if (tocTitle) toc.push({ href: `${name}.xhtml`, title: tocTitle });
@@ -442,14 +665,15 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
       const Wc = 1100, split = zoom > 1;
       let emitted = 0;
       const starts = [];
-      const strip = makeStripper(aspect, Wc, (img) => { emitted++; add(img, `Part ${emitted}`, null); });
+      const strip = makeStripper(aspect, Wc, (img) => { emitted++; add(img, `Part ${emitted}`, null, layerSpans(img.texts || [], img.w, img.h)); });
       for (let k = 0; k < n; k++) {
         const pageNo = first + k;
         onProgress((k + 1) / n * 0.95, `Fitting page ${pageNo} (${k + 1} of ${n}) to screen`);
-        const big = await renderCanvas(await pdf.getPage(pageNo), Math.round(Wc * (split ? 2.1 : 1) * 1.3));
-        const a = analyze(big), plan = planSegments(a, split);
+        const pg = await pdf.getPage(pageNo);
+        const big = await renderCanvas(pg, Math.round(Wc * (split ? 2.1 : 1) * 1.3));
+        const a = analyze(big), plan = planSegments(a, split), titems = plan ? await pageItemsPx(pg, big.width) : [];
         if (plan) {
-          starts.push({ slice: emitted + 1, title: `Page ${pageNo}` });
+          starts.push({ slice: emitted + 1, title: `Page ${pageNo}`, page: k });
           const f = a.f, pad = Math.round(5 * f), fillW = Wc * 0.97;
           const rects = plan.segs.map((sg) => {
             const sx = Math.max(0, Math.floor(sg.x0 * f) - pad), sy = Math.max(0, Math.floor(sg.y0 * f) - pad);
@@ -466,7 +690,8 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
           }
           for (const r of rects) {
             const sc = Math.min(fillW / r.sw, pageScale);
-            await strip.addSeg(big, r.sx, r.sy, r.sw, r.sh, Math.round(r.sw * sc), Math.round(r.sh * sc));
+            const inSeg = titems.filter((t) => { const cx = t.x + t.w / 2, cy = t.base - t.fs * 0.3; return cx >= r.sx && cx <= r.sx + r.sw && cy >= r.sy && cy <= r.sy + r.sh; });
+            await strip.addSeg(big, r.sx, r.sy, r.sw, r.sh, Math.round(r.sw * sc), Math.round(r.sh * sc), inSeg);
           }
           await strip.endPage();
         }
@@ -475,14 +700,18 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
       }
       await strip.finish();
       const pad4 = (k) => `p${String(Math.min(k, emitted)).padStart(4, '0')}.xhtml`;
-      starts.forEach((t) => emitted && toc.push({ href: pad4(t.slice), title: t.title }));
+      if (outline.length) outline.forEach((e) => { const st = starts.find((t) => t.page >= e.page); if (st && emitted) toc.push({ href: pad4(st.slice), title: e.title, level: e.level }); });
+      if (!toc.length) starts.forEach((t) => emitted && toc.push({ href: pad4(t.slice), title: t.title }));
     } else {
       result.skipFirst = true;
       for (let i = first; i <= last; i++) {
         onProgress((i - first + 1) / n * 0.9, `Rendering page ${i} of ${last}`);
-        add(i === first ? cover : await renderPage(await pdf.getPage(i), 1.6, 0.8), `Page ${i}`, `Page ${i}`);
+        const pg = await pdf.getPage(i), img = i === first ? cover : await renderPage(pg, 1.6, 0.8);
+        add(img, `Page ${i}`, outline.length ? null : `Page ${i}`, layerSpans(await pageItemsPx(pg, img.w), img.w, img.h));
         await sleep0();
       }
+      const nm = (k) => `p${String(k + 1).padStart(4, '0')}.xhtml`;
+      outline.forEach((e) => toc.push({ href: nm(Math.min(e.page, result.pageImages.length - 1)), title: e.title, level: e.level }));
     }
     if (!result.pageImages.length) { add(cover, 'Page 1', 'Page 1'); }
   } else {
@@ -531,34 +760,45 @@ export async function convert(file, { title, author, mode, fit = false, aspect =
     result.hasText = blocks.some((b) => b.t !== 'img');
     const flat = raw.flat();
     result.messy = !keepMath && flat.length > 0 && flat.filter((l) => l.text.length <= 3).length / flat.length > 0.2;
-    const chapters = chunkChapters(blocks, n, title, first - 1);
+    const chapters = chunkChapters(blocks, n, title, first - 1, outline);
     let imgN = 0;
     chapters.forEach((c, i) => {
       const name = `c${String(i + 1).padStart(3, '0')}`;
-      const body = c.blocks.map((b) => {
+      const html = []; let list = null;
+      const closeList = () => { if (list) { html.push(`</${list}>`); list = null; } };
+      for (const b of c.blocks) {
+        const ida = b.anchor ? ` id="${b.anchor}"` : '';
+        if (b.t === 'li') {
+          const tag = b.ordered ? 'ol' : 'ul';
+          if (list !== tag) { closeList(); html.push(tag === 'ol' && b.n > 1 ? `<ol start="${b.n}">` : `<${tag}>`); list = tag; }
+          html.push(`<li${ida}>${toHtml(b.text, b.fmt)}</li>`); continue;
+        }
+        closeList();
         if (b.t === 'img') {
           const f = `images/img${++imgN}.${b.mime === 'image/jpeg' ? 'jpg' : 'png'}`;
           zip.file(`OEBPS/${f}`, b.blob);
           manifest += `<item id="img${imgN}" href="${f}" media-type="${b.mime}"/>`;
           const wd = b.em ? `${b.em.toFixed(2)}em;max-width:100%` : `${Math.max(8, Math.round(b.wf * 100))}%`;
-          return `<div class="fig${b.opener ? ' chap' : ''}${b.region ? ' eq' : ''}"><img src="${f}" alt="${esc(b.title || (b.region ? 'formula or table' : ''))}" style="width:${wd}"/></div>`;
-        }
-        if (b.t === 'p') return `<p${b.align === 'center' ? ' class="center"' : ''}>${esc(b.text)}</p>`;
-        return `<${b.t}>${esc(b.text)}</${b.t}>`;
-      }).join('\n');
+          html.push(`<div${ida} class="fig${b.opener ? ' chap' : ''}${b.region ? ' eq' : ''}"><img src="${f}" alt="${esc(b.title || (b.region ? 'formula or table' : ''))}" style="width:${wd}"/></div>`);
+        } else if (b.t === 'p') html.push(`<p${ida}${b.align === 'center' ? ' class="center"' : ''}>${toHtml(b.text, b.fmt)}</p>`);
+        else html.push(`<${b.t}${ida}>${esc(b.text)}</${b.t}>`);
+      }
+      closeList();
+      const body = html.join('\n');
       zip.file(`OEBPS/${name}.xhtml`, XHTML(c.title, body));
       manifest += `<item id="${name}" href="${name}.xhtml" media-type="application/xhtml+xml"/>`;
       spine += `<itemref idref="${name}"/>`;
-      toc.push({ href: `${name}.xhtml`, title: c.title });
+      toc.push({ href: `${name}.xhtml`, title: c.title, level: 0 });
+      for (const sb of c.subs || []) toc.push({ href: `${name}.xhtml#${sb.anchor}`, title: sb.title, level: 1 });
     });
   }
 
   zip.file('OEBPS/nav.xhtml', `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><meta charset="utf-8"/><title>Contents</title></head>
-<body><nav epub:type="toc" id="toc"><h1>Contents</h1><ol>${toc.map((t) => `<li><a href="${t.href}">${esc(t.title)}</a></li>`).join('')}</ol></nav></body></html>`);
+<body><nav epub:type="toc" id="toc"><h1>Contents</h1>${navHtml(toc)}</nav></body></html>`);
   zip.file('OEBPS/toc.ncx', `<?xml version="1.0" encoding="utf-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="${id}"/></head><docTitle><text>${esc(title)}</text></docTitle>
-<navMap>${toc.map((t, i) => `<navPoint id="n${i}" playOrder="${i + 1}"><navLabel><text>${esc(t.title)}</text></navLabel><content src="${t.href}"/></navPoint>`).join('')}</navMap></ncx>`);
+<navMap>${ncxPoints(toc)}</navMap></ncx>`);
   zip.file('OEBPS/content.opf', `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
