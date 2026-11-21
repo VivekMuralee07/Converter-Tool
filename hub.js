@@ -51,7 +51,7 @@ export function initHub({ show }) {
         input.value = opts[o.id];
       } else {
         input = el('input'); input.type = o.type === 'number' ? 'number' : 'text'; input.value = opts[o.id]; input.placeholder = o.placeholder || '';
-        if (o.type === 'number') { input.min = 1; input.inputMode = 'numeric'; }
+        if (o.type === 'number') { input.min = o.min ?? 1; input.step = 'any'; input.inputMode = 'decimal'; }
       }
       input.oninput = input.onchange = () => { opts[o.id] = input.value; refreshVisibility(); };
       lab.appendChild(input); box.appendChild(lab);

@@ -43,6 +43,83 @@ async function loadPdfLib(file) {
   catch (e) { throw new Error(/encrypt/i.test(e.message) ? `"${file.name}" is password protected.` : `Could not read "${file.name}" as a PDF.`); }
 }
 
+// Pages drawn as JPEG pictures (smallest, but the text stops being text)
+async function rasterizePdf(f, dpi, quality, progress, p0, p1, label = '') {
+  const { PDFDocument } = await LIBS.pdflib(), { pdf } = await openPdf(f), d = await PDFDocument.create();
+  for (let p = 1; p <= pdf.numPages; p++) {
+    progress(p0 + (p1 - p0) * (p - 1) / pdf.numPages, `${label}page ${p} of ${pdf.numPages} as image`);
+    const page = await pdf.getPage(p), base = page.getViewport({ scale: 1 });
+    const { blob } = await renderPageBlob(page, dpi / 72, 'image/jpeg', quality);
+    d.addPage([base.width, base.height]).drawImage(await d.embedJpg(await blob.arrayBuffer()), { x: 0, y: 0, width: base.width, height: base.height }); await sleep0();
+  }
+  pdf.destroy();
+  return pdfBlob(await d.save({ useObjectStreams: true }));
+}
+
+// Re-encodes the pictures inside a PDF (scaled by `scale`, JPEG `quality`) and leaves text, fonts and vector art alone.
+async function recompressPdf(f, scale, quality, progress, p0, p1, label = '') {
+  const L = await LIBS.pdflib(), { PDFName, PDFRawStream, PDFArray, PDFNumber, PDFRef, PDFBool } = L, doc = await loadPdfLib(f), ctx = doc.context;
+  const get = (dict, k) => { const v = dict.get(PDFName.of(k)); return v instanceof PDFRef ? ctx.lookup(v) : v; };
+  const nameOf = (v) => (v && v.asString ? v.asString().replace(/^\//, '') : '');
+  const all = [...ctx.enumerateIndirectObjects()].filter(([, ob]) => ob instanceof PDFRawStream && nameOf(ob.dict.get(PDFName.of('Subtype'))) === 'Image');
+  let changed = 0, images = 0;
+  for (const [i, [ref, ob]] of all.entries()) {
+    progress(p0 + (p1 - p0) * 0.9 * i / Math.max(1, all.length), `${label}picture ${i + 1} of ${all.length}`);
+    const d = ob.dict, w = get(d, 'Width')?.asNumber(), h = get(d, 'Height')?.asNumber(), bpc = get(d, 'BitsPerComponent')?.asNumber() ?? 8;
+    if (!w || !h || w * h < 22500 || ob.contents.length < 20000) continue;
+    if (get(d, 'ImageMask') instanceof PDFBool && get(d, 'ImageMask').asBoolean()) continue;
+    if (d.has(PDFName.of('Mask')) || d.has(PDFName.of('Decode'))) continue;
+    images++;
+    let fl = get(d, 'Filter'); if (fl instanceof PDFArray) { if (fl.size() !== 1) continue; fl = ctx.lookup(fl.get(0)); }
+    const filter = nameOf(fl);
+    let cs = get(d, 'ColorSpace'), comps = 0;
+    if (cs instanceof PDFArray) { const head = nameOf(ctx.lookup(cs.get(0))); if (head === 'ICCBased') comps = ctx.lookup(cs.get(1))?.dict?.get(PDFName.of('N'))?.asNumber() || 0; else if (head === 'CalRGB') comps = 3; else if (head === 'CalGray') comps = 1; else continue; }
+    else { const n = nameOf(cs); comps = n === 'DeviceRGB' ? 3 : n === 'DeviceGray' ? 1 : 0; }
+    if (comps !== 3 && comps !== 1) continue;           // CMYK, indexed ... are left as they are
+    try {
+      let bmp, srcW = w, srcH = h;
+      if (filter === 'DCTDecode') bmp = await createImageBitmap(new Blob([ob.contents], { type: 'image/jpeg' }), { imageOrientation: 'none' });
+      else if (filter === 'FlateDecode' && bpc === 8) {
+        let raw = new Uint8Array(await new Response(new Blob([ob.contents]).stream().pipeThrough(new DecompressionStream('deflate'))).arrayBuffer());
+        const parms = get(d, 'DecodeParms'), dp = parms instanceof PDFArray ? ctx.lookup(parms.get(0)) : parms, pred = dp && dp.get ? dp.get(PDFName.of('Predictor'))?.asNumber() || 1 : 1;
+        if (pred >= 10) raw = pngUnfilter(raw, w, h, comps); else if (pred !== 1) continue;
+        if (raw.length < w * h * comps) continue;
+        const rgba = new Uint8ClampedArray(w * h * 4);
+        for (let k = 0, j = 0; k < w * h; k++) { if (comps === 3) { rgba[j++] = raw[k * 3]; rgba[j++] = raw[k * 3 + 1]; rgba[j++] = raw[k * 3 + 2]; } else { const v = raw[k]; rgba[j++] = v; rgba[j++] = v; rgba[j++] = v; } rgba[j++] = 255; }
+        bmp = await createImageBitmap(new ImageData(rgba, w, h));
+      } else continue;
+      const nw = Math.max(8, Math.round(srcW * scale)), nh = Math.max(8, Math.round(srcH * scale));
+      const c = document.createElement('canvas'); c.width = nw; c.height = nh; const x = c.getContext('2d');
+      x.fillStyle = '#fff'; x.fillRect(0, 0, nw, nh); x.imageSmoothingQuality = 'high'; x.drawImage(bmp, 0, 0, nw, nh); bmp.close();
+      const out = new Uint8Array(await (await toBlob(c, 'image/jpeg', quality)).arrayBuffer()); c.width = c.height = 0;
+      if (out.length > ob.contents.length * 0.92) continue;   // no gain: keep the original picture
+      const nd = ctx.obj({ Type: 'XObject', Subtype: 'Image', Width: nw, Height: nh, ColorSpace: 'DeviceRGB', BitsPerComponent: 8, Filter: 'DCTDecode', Length: out.length });
+      const sm = d.get(PDFName.of('SMask')); if (sm) nd.set(PDFName.of('SMask'), sm);
+      ctx.assign(ref, PDFRawStream.of(nd, out)); changed++;
+    } catch { /* a picture this browser cannot decode stays as it is */ }
+    await sleep0();
+  }
+  progress(p0 + (p1 - p0) * 0.95, `${label}saving`);
+  return { bytes: await doc.save({ useObjectStreams: true }), images, changed };
+}
+
+// PNG-style row filters used by Flate pictures (Predictor 10-15)
+function pngUnfilter(data, w, h, comps) {
+  const bpp = comps, row = w * comps, out = new Uint8Array(row * h);
+  let pos = 0;
+  for (let y = 0; y < h; y++) {
+    const ft = data[pos++], o = y * row, pr = o - row;
+    for (let i = 0; i < row; i++) {
+      const v = data[pos++], a = i >= bpp ? out[o + i - bpp] : 0, b = y ? out[pr + i] : 0, c = y && i >= bpp ? out[pr + i - bpp] : 0;
+      let r;
+      if (ft === 0) r = v; else if (ft === 1) r = v + a; else if (ft === 2) r = v + b; else if (ft === 3) r = v + ((a + b) >> 1);
+      else { const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c); r = v + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c); }
+      out[o + i] = r & 255;
+    }
+  }
+  return out;
+}
+
 async function renderPageBlob(page, scale, type, q) {
   const vp = page.getViewport({ scale });
   const c = document.createElement('canvas'); c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
@@ -176,24 +253,39 @@ export const TOOLS = [
     },
   },
   {
-    id: 'pdfcompress', icon: '🗜️', title: 'Compress PDF', desc: 'Make a PDF smaller',
+    id: 'pdfcompress', icon: '🗜️', title: 'Compress PDF', desc: 'Shrink a PDF — pick a quality or an exact size',
     accept: '.pdf,application/pdf', multiple: false,
     options: [
-      { id: 'mode', label: 'Method', type: 'select', value: 'light', choices: [['light', 'Light — keeps text selectable'], ['strong', 'Strong — turns pages into images']] },
-      { id: 'level', label: 'Strength', type: 'select', value: 'medium', choices: [['high', 'Better quality'], ['medium', 'Balanced'], ['low', 'Smallest file']], show: (o) => o.mode === 'strong' },
+      { id: 'mode', label: 'Method', type: 'select', value: 'smart', choices: [['smart', 'Smart — shrinks pictures, keeps text selectable'], ['target', 'Target size — reach the size I choose'], ['raster', 'Pages as images — smallest, text not selectable']] },
+      { id: 'level', label: 'Strength', type: 'select', value: 'medium', choices: [['high', 'Better quality'], ['medium', 'Balanced'], ['low', 'Smallest file']], show: (o) => o.mode !== 'target' },
+      { id: 'target', label: 'Wanted size', type: 'number', value: '1', min: 0.05, show: (o) => o.mode === 'target' },
+      { id: 'unit', label: 'Unit', type: 'select', value: 'MB', choices: [['KB', 'KB'], ['MB', 'MB']], show: (o) => o.mode === 'target' },
     ],
     async run([f], o, progress) {
-      const { PDFDocument } = await LIBS.pdflib();
-      if (o.mode === 'light') { progress(0.4, 'Optimizing'); const d = await loadPdfLib(f); return [{ name: `${baseName(f.name)}-compressed.pdf`, blob: pdfBlob(await d.save({ useObjectStreams: true })), note: 'Light mode only removes overhead, so some PDFs shrink very little.' }]; }
-      const { pdf } = await openPdf(f), q = { high: [150, 0.8], medium: [110, 0.65], low: [80, 0.5] }[o.level], d = await PDFDocument.create();
-      for (let p = 1; p <= pdf.numPages; p++) {
-        progress((p - 1) / pdf.numPages, `Compressing page ${p} of ${pdf.numPages}`);
-        const page = await pdf.getPage(p), base = page.getViewport({ scale: 1 });
-        const { blob } = await renderPageBlob(page, q[0] / 72, 'image/jpeg', q[1]);
-        d.addPage([base.width, base.height]).drawImage(await d.embedJpg(await blob.arrayBuffer()), { x: 0, y: 0, width: base.width, height: base.height }); await sleep0();
+      const name = `${baseName(f.name)}-compressed.pdf`, fmt = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(2)} MB` : `${Math.round(n / 1024)} KB`);
+      const done = (blob, note) => blob.size >= f.size
+        ? [{ name, blob: f, note: `${note ? note + ' ' : ''}This PDF cannot be made smaller without hurting it, so the original is kept (${fmt(f.size)}).` }]
+        : [{ name, blob, note: `${fmt(f.size)} → ${fmt(blob.size)} (${Math.round((1 - blob.size / f.size) * 100)}% smaller). ${note || ''}`.trim() }];
+      if (o.mode === 'raster') { const q = { high: [150, 0.8], medium: [110, 0.65], low: [80, 0.5] }[o.level]; return done(await rasterizePdf(f, q[0], q[1], progress, 0, 1), 'Pages are now images, so text can no longer be selected.'); }
+      if (o.mode === 'smart') { const q = { high: [1, 0.82], medium: [0.75, 0.65], low: [0.5, 0.5] }[o.level]; const r = await recompressPdf(f, q[0], q[1], progress, 0, 1); return done(pdfBlob(r.bytes), r.changed ? `${r.changed} of ${r.images} pictures recompressed; text and vector graphics untouched.` : r.images ? 'Its pictures use an encoding that cannot be recompressed here — try “Target size” or “Pages as images”.' : 'This PDF has no large pictures, so only its structure was tidied.'); }
+      // target size: tighten step by step until it fits
+      const want = Math.round((parseFloat(o.target) || 1) * (o.unit === 'KB' ? 1024 : 1048576));
+      if (f.size <= want) return [{ name, blob: f, note: `The file is already ${fmt(f.size)}, below your ${fmt(want)} target.` }];
+      const ladder = [[1, 0.85], [0.8, 0.75], [0.62, 0.65], [0.48, 0.55], [0.36, 0.45], [0.27, 0.38], [0.2, 0.3]], steps = ladder.length + 4;
+      let best = null, bestNote = '';
+      for (const [i, [sc, q]] of ladder.entries()) {
+        const r = await recompressPdf(f, sc, q, progress, i / steps, (i + 1) / steps, `Try ${i + 1}: `);
+        if (!best || r.bytes.length < best.size) { best = pdfBlob(r.bytes); bestNote = `Pictures reduced to ${Math.round(sc * 100)}% size, JPEG quality ${Math.round(q * 100)}.`; }
+        if (best.size <= want) return done(best, bestNote + ' Text stays selectable.');
+        if (!r.images) break; // nothing to shrink: pictures are not the problem
       }
-      const blob = pdfBlob(await d.save());
-      return [{ name: `${baseName(f.name)}-compressed.pdf`, blob, note: blob.size >= f.size ? 'The result is not smaller than the original — keep the original.' : 'Pages are now images, so text can no longer be selected.' }];
+      const raster = [[110, 0.6], [90, 0.5], [72, 0.45], [58, 0.4]];
+      for (const [i, [dpi, q]] of raster.entries()) {
+        const rb = await rasterizePdf(f, dpi, q, progress, (ladder.length + i) / steps, (ladder.length + i + 1) / steps, `Try ${ladder.length + i + 1}: `);
+        if (rb.size < best.size) { best = rb; bestNote = `Pages turned into images at ${dpi} dpi, so text can no longer be selected.`; }
+        if (best.size <= want) return done(best, bestNote);
+      }
+      return done(best, `Could not reach ${fmt(want)} — this is the smallest it can get without becoming unreadable. ${bestNote}`);
     },
   },
   {
